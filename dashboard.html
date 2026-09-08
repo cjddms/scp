@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-NAC Security Gateway</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0f1115; color: #e6e6e6; }
+  header { padding: 14px 20px; background: #161a22; border-bottom: 1px solid #2a2f3a; }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  nav { display: flex; gap: 4px; padding: 8px 16px; background: #12151c; border-bottom: 1px solid #2a2f3a; flex-wrap: wrap; }
+  nav button { background: none; border: 1px solid transparent; color: #9aa4b2; padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+  nav button.active { background: #232a36; color: #fff; }
+  main { padding: 18px 20px; max-width: 1100px; }
+  section { display: none; }
+  section.active { display: block; }
+  h2 { font-size: 14px; margin: 0 0 10px; color: #cbd3df; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #262c37; font-size: 13px; vertical-align: top; }
+  th { color: #8b95a3; font-weight: 500; }
+  .wrap { overflow-x: auto; }
+  form { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 18px; padding: 12px; background: #161a22; border: 1px solid #2a2f3a; border-radius: 8px; }
+  input, select { background: #0f1115; border: 1px solid #333b48; color: #e6e6e6; padding: 5px 8px; border-radius: 5px; font: inherit; }
+  button.act { background: #2f6feb; border: none; color: #fff; padding: 5px 12px; border-radius: 5px; cursor: pointer; font: inherit; }
+  button.sm { padding: 3px 8px; font-size: 12px; background: #232a36; border: 1px solid #333b48; color: #cbd3df; border-radius: 4px; cursor: pointer; }
+  button.danger { color: #ff8080; border-color: #5b2b2b; }
+  .allow { color: #4ade80; } .deny, .DENY { color: #f87171; }
+  .risk-hi { color: #f87171; font-weight: 600; } .risk-md { color: #fbbf24; }
+  .muted { color: #8b95a3; } .err { color: #f87171; white-space: pre-wrap; }
+  code { background: #1c222c; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  textarea { width: 100%; min-height: 90px; background: #0f1115; border: 1px solid #333b48; color: #e6e6e6; border-radius: 5px; font: 12px/1.4 ui-monospace, monospace; padding: 8px; }
+</style>
+</head>
+<body>
+<header><h1>AI-NAC Security Gateway</h1></header>
+<nav id="nav"></nav>
+<main>
+  <section id="agents" class="active">
+    <h2>Agents</h2>
+    <form onsubmit="createAgent(event)">
+      <input name="agent_id" placeholder="agent_id" required>
+      <input name="agent_name" placeholder="name" required>
+      <input name="token" placeholder="token" required>
+      <select name="allowed_protocol"><option>*</option><option>mcp</option><option>a2a</option></select>
+      <input name="allowed_targets" placeholder="allowed_targets (comma sep)">
+      <button class="act">Register</button>
+    </form>
+    <div class="wrap"><table id="agents-t"></table></div>
+  </section>
+
+  <section id="policies">
+    <h2>Policies &mdash; default deny; explicit DENY beats ALLOW, then most specific</h2>
+    <form onsubmit="createPolicy(event)">
+      <input name="name" placeholder="name" required>
+      <input name="agent_id" placeholder="agent_id" value="*">
+      <select name="protocol"><option>*</option><option>mcp</option><option>a2a</option></select>
+      <input name="target" placeholder="target" value="*">
+      <input name="tool" placeholder="tool" value="*">
+      <select name="action"><option>ALLOW</option><option>DENY</option></select>
+      <input name="priority" type="number" value="100" style="width:70px">
+      <button class="act">Add</button>
+    </form>
+    <div class="wrap"><table id="policies-t"></table></div>
+  </section>
+
+  <section id="traffic">
+    <h2>Traffic Monitor <button class="sm" onclick="loadTraffic()">refresh</button></h2>
+    <div class="wrap"><table id="traffic-t"></table></div>
+  </section>
+
+  <section id="events">
+    <h2>Security Events <button class="sm" onclick="loadEvents()">refresh</button></h2>
+    <div class="wrap"><table id="events-t"></table></div>
+  </section>
+
+  <section id="risk">
+    <h2>Risk <button class="sm" onclick="loadRisk()">refresh</button></h2>
+    <div class="wrap"><table id="risk-t"></table></div>
+  </section>
+
+  <section id="evaluate">
+    <h2>Evaluate a request (runs the full pipeline, no proxy)</h2>
+    <form onsubmit="doEval(event)" style="flex-direction:column; align-items:stretch">
+      <label class="muted">headers (JSON)</label>
+      <textarea name="headers">{"X-Agent-ID": "agent-001", "X-Agent-Token": "secret"}</textarea>
+      <label class="muted">body (JSON)</label>
+      <textarea name="body">{"jsonrpc": "2.0", "server": "mcp-search", "params": {"name": "search", "arguments": {"q": "hello"}}}</textarea>
+      <div style="display:flex; gap:6px">
+        <input name="destination" placeholder="destination" value="mcp-search" required>
+        <button class="act">Evaluate</button>
+      </div>
+    </form>
+    <pre id="eval-out" class="err"></pre>
+  </section>
+</main>
+
+<script>
+const TABS = ["agents","policies","traffic","events","risk","evaluate"];
+const $ = s => document.querySelector(s);
+
+const nav = $("#nav");
+TABS.forEach((t,i) => {
+  const b = document.createElement("button");
+  b.textContent = t[0].toUpperCase() + t.slice(1);
+  b.onclick = () => show(t);
+  if (i === 0) b.className = "active";
+  nav.appendChild(b);
+});
+function show(t) {
+  TABS.forEach(x => {
+    $("#"+x).classList.toggle("active", x === t);
+    nav.children[TABS.indexOf(x)].classList.toggle("active", x === t);
+  });
+  ({agents:loadAgents, policies:loadPolicies, traffic:loadTraffic, events:loadEvents, risk:loadRisk}[t] || (()=>{}))();
+}
+
+async function api(path, opts) {
+  const r = await fetch("/api" + path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.status === 204 ? null : r.json();
+}
+const formObj = f => Object.fromEntries(new FormData(f).entries());
+function tbl(el, cols, rows, rowFn) {
+  el.innerHTML = "<tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr>" +
+    (rows.length ? rows.map(rowFn).join("") : `<tr><td colspan="${cols.length}" class="muted">none</td></tr>`);
+}
+const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const riskCls = n => n >= 60 ? "risk-hi" : n >= 30 ? "risk-md" : "";
+
+// ---- Agents ----
+async function loadAgents() {
+  const rows = await api("/agents");
+  tbl($("#agents-t"), ["agent_id","name","status","protocol","targets","created","",""], rows, a => `<tr>
+    <td><code>${esc(a.agent_id)}</code></td><td>${esc(a.agent_name)}</td>
+    <td class="${a.status==='active'?'allow':'deny'}">${a.status}</td>
+    <td>${esc(a.allowed_protocol)}</td><td>${esc(a.allowed_targets)}</td>
+    <td class="muted">${esc((a.created_at||'').slice(0,19))}</td>
+    <td><button class="sm" onclick="toggleAgent('${a.agent_id}','${a.status}')">${a.status==='active'?'disable':'enable'}</button></td>
+    <td><button class="sm danger" onclick="delAgent('${a.agent_id}')">delete</button></td></tr>`);
+}
+async function createAgent(e) {
+  e.preventDefault();
+  try { await api("/agents", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(formObj(e.target))});
+    e.target.reset(); loadAgents(); } catch (x) { alert(x.message); }
+}
+async function toggleAgent(id, status) {
+  await api(`/agents/${id}?status=${status==='active'?'disabled':'active'}`, {method:"PUT"});
+  loadAgents();
+}
+async function delAgent(id) { if (confirm("delete "+id+"?")) { await api(`/agents/${id}`, {method:"DELETE"}); loadAgents(); } }
+
+// ---- Policies ----
+async function loadPolicies() {
+  const rows = await api("/policies");
+  tbl($("#policies-t"), ["id","name","agent","proto","target","tool","action","prio","enabled","",""], rows, p => `<tr>
+    <td>${p.policy_id}</td><td>${esc(p.name)}</td><td><code>${esc(p.agent_id)}</code></td>
+    <td>${esc(p.protocol)}</td><td>${esc(p.target)}</td><td>${esc(p.tool)}</td>
+    <td class="${p.action}">${p.action}</td><td>${p.priority}</td>
+    <td>${p.enabled ? "yes" : "no"}</td>
+    <td><button class="sm" onclick='togglePolicy(${JSON.stringify(p)})'>${p.enabled?"disable":"enable"}</button></td>
+    <td><button class="sm danger" onclick="delPolicy(${p.policy_id})">delete</button></td></tr>`);
+}
+async function createPolicy(e) {
+  e.preventDefault();
+  const o = formObj(e.target); o.priority = +o.priority; o.enabled = true;
+  try { await api("/policies", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(o)});
+    loadPolicies(); } catch (x) { alert(x.message); }
+}
+async function togglePolicy(p) {
+  const body = {name:p.name, agent_id:p.agent_id, protocol:p.protocol, target:p.target, tool:p.tool,
+    action:p.action, priority:p.priority, enabled: !p.enabled, description: p.description || ""};
+  await api(`/policies/${p.policy_id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  loadPolicies();
+}
+async function delPolicy(id) { if (confirm("delete policy "+id+"?")) { await api(`/policies/${id}`, {method:"DELETE"}); loadPolicies(); } }
+
+// ---- Traffic ----
+async function loadTraffic() {
+  const rows = await api("/logs?limit=200");
+  tbl($("#traffic-t"), ["time","agent","proto","destination","tool","risk","policy","decision","reason",""], rows, l => `<tr>
+    <td class="muted">${esc((l.timestamp||'').slice(11,19))}</td>
+    <td><code>${esc(l.agent_id)}</code></td><td>${esc(l.protocol)}</td>
+    <td>${esc(l.destination)}</td><td>${esc(l.tool)}</td>
+    <td class="${riskCls(l.risk_score)}">${l.risk_score ?? ''}</td>
+    <td>${l.policy_id ?? ''}</td>
+    <td class="${l.decision}">${esc(l.decision)}</td>
+    <td class="muted">${esc(l.reason)}</td>
+    <td>
+      <button class="sm" onclick="decide(${l.log_id},'ALLOW')">ALLOW</button>
+      <button class="sm danger" onclick="decide(${l.log_id},'BLOCK')">BLOCK</button>
+    </td></tr>`);
+}
+async function decide(id, decision) {
+  const reason = prompt(`${decision} request ${id} — reason:`, "admin decision");
+  if (reason === null) return;
+  await api(`/decisions/${id}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({decision, reason})});
+  loadTraffic();
+}
+
+// ---- Events ----
+async function loadEvents() {
+  const rows = await api("/events?limit=200");
+  tbl($("#events-t"), ["time","agent","type","severity","target","risk","reason","status"], rows, e => `<tr>
+    <td class="muted">${esc((e.timestamp||'').slice(11,19))}</td>
+    <td><code>${esc(e.agent_id)}</code></td><td>${esc(e.event_type)}</td>
+    <td class="${e.severity==='high'?'deny':''}">${esc(e.severity)}</td>
+    <td>${esc(e.target)}</td><td class="${riskCls(e.risk_score)}">${e.risk_score ?? ''}</td>
+    <td class="muted">${esc(e.reason)}</td><td>${esc(e.status)}</td></tr>`);
+}
+
+// ---- Risk ----
+async function loadRisk() {
+  const rows = await api("/risk?limit=200");
+  tbl($("#risk-t"), ["log","agent","target","tool","risk","decision","reason"], rows, r => `<tr>
+    <td>${r.log_id}</td><td><code>${esc(r.agent_id)}</code></td>
+    <td>${esc(r.target)}</td><td>${esc(r.tool)}</td>
+    <td class="${riskCls(r.risk_score)}">${r.risk_score ?? ''}</td>
+    <td class="${r.decision}">${esc(r.decision)}</td>
+    <td class="muted">${esc(r.reason)}</td></tr>`);
+}
+
+// ---- Evaluate ----
+async function doEval(e) {
+  e.preventDefault();
+  const o = formObj(e.target), out = $("#eval-out");
+  try {
+    const payload = {headers: JSON.parse(o.headers), body: JSON.parse(o.body), destination: o.destination, source: "dashboard"};
+    out.textContent = JSON.stringify(await api("/evaluate", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)}), null, 2);
+  } catch (x) { out.textContent = x.message; }
+}
+
+loadAgents();
+</script>
+</body>
+</html>
