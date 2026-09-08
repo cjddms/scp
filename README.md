@@ -7,8 +7,25 @@ Agent Auth -> Protocol Inspector (MCP/A2A) -> Security Analyzers
            -> Risk Engine -> Policy Engine (decision) -> SQLite Logging
 ```
 
-Plus a FastAPI management API and a mitmproxy addon for real traffic
-interception. SQLite DB (`nac.db`) is created automatically on first run.
+Plus a FastAPI management API, a single-file admin dashboard, and a mitmproxy
+addon for real traffic interception. SQLite DB (`nac.db`) is created
+automatically on first run.
+
+## Status
+
+All 9 spec phases implemented and passing `--selftest`:
+
+| Phase | Feature | File |
+|---|---|---|
+| 1 | Proxy / traffic intercept (mitmproxy addon) | `nac-proxy.py` |
+| 2 | Agent auth & registration (X-Agent-ID / X-Agent-Token, hashed) | `nac-proxy.py` |
+| 3 | MCP Inspector (JSON-RPC tool/args/target) | `nac-proxy.py` |
+| 4 | A2A Inspector (caller/target/skill/payload) | `nac-proxy.py` |
+| 5 | Policy Engine — default-deny, explicit DENY > ALLOW > specificity | `nac-proxy.py` |
+| 6 | Risk Analysis — rule-based advisory score 0-100 | `nac-proxy.py` |
+| 7 | Security Analyzers — tool poisoning, permission abuse, sensitive data, rug pull | `nac-proxy.py` |
+| 8 | Logging + Management API (agents/policies/logs/events/risk/decisions) | `nac-proxy.py` |
+| 9 | Admin dashboard (no build step) | `dashboard.html` |
 
 ## Requirements
 
@@ -92,5 +109,7 @@ curl.exe -X POST http://127.0.0.1:8000/api/policies `
 
 - `mitmdump` and `python nac-proxy.py` share the same `nac.db`, so agents and
   policies added through the API apply to intercepted traffic immediately.
-- Out of scope (per spec): React dashboard, test MCP/A2A servers, attack tooling,
-  Postgres/Redis/Docker.
+- The dashboard is one static `dashboard.html` (vanilla JS, no React/Vite build)
+  served at `/`; it only calls the `/api` endpoints.
+- Out of scope (per spec): test MCP/A2A servers, attack tooling,
+  Postgres/Redis/Docker, ML/LLM classification.

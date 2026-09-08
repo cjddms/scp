@@ -7,8 +7,25 @@ AI-NAC 코어 엔진(`nac-proxy.py`)의 단일 파일 구현입니다:
              -> 위험도 엔진 -> 정책 엔진 (판단) -> SQLite 로깅
 ```
 
-여기에 더해 FastAPI 관리 API와 실제 트래픽 가로채기를 위한 mitmproxy 애드온을
-제공합니다. SQLite DB(`nac.db`)는 최초 실행 시 자동으로 생성됩니다.
+여기에 더해 FastAPI 관리 API, 단일 파일 관리자 대시보드, 실제 트래픽 가로채기를
+위한 mitmproxy 애드온을 제공합니다. SQLite DB(`nac.db`)는 최초 실행 시 자동으로
+생성됩니다.
+
+## 진행 상태
+
+사양의 9개 Phase 모두 구현 완료, `--selftest` 통과:
+
+| Phase | 기능 | 파일 |
+|---|---|---|
+| 1 | 프록시 / 트래픽 가로채기 (mitmproxy 애드온) | `nac-proxy.py` |
+| 2 | 에이전트 인증·등록 (X-Agent-ID / X-Agent-Token, 해시 저장) | `nac-proxy.py` |
+| 3 | MCP Inspector (JSON-RPC 도구/인자/대상) | `nac-proxy.py` |
+| 4 | A2A Inspector (caller/target/skill/payload) | `nac-proxy.py` |
+| 5 | 정책 엔진 — 기본 차단, 명시적 DENY > ALLOW > 세부조건 | `nac-proxy.py` |
+| 6 | 위험도 분석 — 규칙 기반 보조 점수 0-100 | `nac-proxy.py` |
+| 7 | 보안 분석기 — 툴 포이즈닝, 권한 남용, 민감정보, 러그풀 | `nac-proxy.py` |
+| 8 | 로깅 + 관리 API (agents/policies/logs/events/risk/decisions) | `nac-proxy.py` |
+| 9 | 관리자 대시보드 (빌드 불필요) | `dashboard.html` |
 
 ## 요구 사항
 
@@ -92,5 +109,7 @@ curl.exe -X POST http://127.0.0.1:8000/api/policies `
 
 - `mitmdump` 와 `python nac-proxy.py` 는 동일한 `nac.db` 를 공유하므로, API로 추가한
   에이전트와 정책이 가로챈 트래픽에 즉시 적용됩니다.
-- 범위 외(사양 기준): React 대시보드, 테스트용 MCP/A2A 서버, 공격 도구,
-  Postgres/Redis/Docker.
+- 대시보드는 `/` 에서 서빙되는 단일 정적 파일 `dashboard.html` 입니다
+  (React/Vite 빌드 없이 바닐라 JS, `/api` 엔드포인트만 호출).
+- 범위 외(사양 기준): 테스트용 MCP/A2A 서버, 공격 도구,
+  Postgres/Redis/Docker, ML/LLM 분류.
