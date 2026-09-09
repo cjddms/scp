@@ -32,16 +32,19 @@ Docker. Single SQLite DB, rule-based risk only, admin has final say.
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-DB_PATH = Path(__file__).with_name("nac.db")
+# Default: next to this file (stable regardless of cwd). Override with NAC_DB_PATH
+# when the install dir is read-only or you want the DB on a separate data path.
+DB_PATH = Path(os.environ.get("NAC_DB_PATH") or Path(__file__).with_name("nac.db"))
 
 # --------------------------------------------------------------------------
 # Database
@@ -119,7 +122,11 @@ CREATE TABLE IF NOT EXISTS fingerprints (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    # Local wall-clock time with tz offset, one source for every timestamp
+    # (agents.created_at, logs.timestamp, events.timestamp, ...) so they all
+    # agree and match the operator's clock. ponytail: single-node deploy; if
+    # this ever runs multi-region, switch to datetime.now(timezone.utc).
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 @contextmanager
@@ -681,8 +688,15 @@ def build_api():
     def list_agents():
         with db() as conn:
             rows = conn.execute("SELECT agent_id, agent_name, description, status, allowed_protocol,"
-                                 " allowed_targets, created_at, updated_at FROM agents").fetchall()
+                                 " allowed_targets, created_at, updated_at,"
+                                 " (token_hash != '') AS has_token FROM agents").fetchall()
         return [dict(r) for r in rows]
+
+    @app.delete("/api/agents")
+    def delete_all_agents():
+        with db() as conn:
+            conn.execute("DELETE FROM agents")
+        return {"status": "all deleted"}
 
     @app.get("/api/agents/{agent_id}")
     def get_agent(agent_id: str):
@@ -695,7 +709,8 @@ def build_api():
         return dict(row)
 
     @app.put("/api/agents/{agent_id}")
-    def update_agent(agent_id: str, status: str | None = None, allowed_targets: str | None = None):
+    def update_agent(agent_id: str, status: str | None = None, allowed_targets: str | None = None,
+                     token: str | None = None):
         with db() as conn:
             existing = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
             if not existing:
@@ -705,6 +720,9 @@ def build_api():
             if allowed_targets is not None:
                 conn.execute("UPDATE agents SET allowed_targets=?, updated_at=? WHERE agent_id=?",
                              (allowed_targets, _now(), agent_id))
+            if token:  # reissue: store only the new hash, plaintext is never kept
+                conn.execute("UPDATE agents SET token_hash=?, updated_at=? WHERE agent_id=?",
+                             (hash_token(token), _now(), agent_id))
         return {"status": "updated"}
 
     @app.delete("/api/agents/{agent_id}")
@@ -717,6 +735,12 @@ def build_api():
     def list_policies():
         with db() as conn:
             return [dict(r) for r in conn.execute("SELECT * FROM policies").fetchall()]
+
+    @app.delete("/api/policies")
+    def delete_all_policies():
+        with db() as conn:
+            conn.execute("DELETE FROM policies")
+        return {"status": "all deleted"}
 
     @app.get("/api/policies/{policy_id}")
     def get_policy(policy_id: int):
@@ -762,6 +786,12 @@ def build_api():
         with db() as conn:
             return [dict(r) for r in conn.execute(
                 "SELECT * FROM logs ORDER BY log_id DESC LIMIT ?", (limit,)).fetchall()]
+
+    @app.delete("/api/logs")
+    def delete_all_logs():
+        with db() as conn:
+            conn.execute("DELETE FROM logs")
+        return {"status": "all deleted"}
 
     @app.get("/api/logs/{log_id}")
     def get_log(log_id: int):

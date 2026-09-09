@@ -3,142 +3,324 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI-NAC Security Gateway</title>
+<title>AI-NAC Gateway</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    --bg: #0B1428; --panel: #10203B; --panel-2: #0E1A33; --line: #1E3355;
+    --ink: #DCE6F5; --dim: #7C93B8;
+    --cyan: #33E1ED; --allow: #35D6A4; --deny: #FF6B7D; --amber: #F2B857;
+    --disp: "Chakra Petch", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #0f1115; color: #e6e6e6; }
-  header { padding: 14px 20px; background: #161a22; border-bottom: 1px solid #2a2f3a; }
-  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
-  nav { display: flex; gap: 4px; padding: 8px 16px; background: #12151c; border-bottom: 1px solid #2a2f3a; flex-wrap: wrap; }
-  nav button { background: none; border: 1px solid transparent; color: #9aa4b2; padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
-  nav button.active { background: #232a36; color: #fff; }
-  main { padding: 18px 20px; max-width: 1100px; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 400 13px/1.5 var(--mono); }
+  a { color: var(--cyan); }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* ---- top bar ---- */
+  .bar { display: flex; align-items: center; gap: 22px; padding: 0 20px;
+    height: 52px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+  .mark { font: 700 16px/1 var(--disp); letter-spacing: .14em; color: var(--ink); white-space: nowrap; }
+  .mark b { color: var(--cyan); font-weight: 700; }
+  .live { display: flex; align-items: center; gap: 7px; font: 500 11px/1 var(--disp);
+    letter-spacing: .1em; color: var(--dim); }
+  .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--allow); box-shadow: 0 0 8px var(--allow); }
+  .live.down::before { background: var(--deny); box-shadow: 0 0 8px var(--deny); }
+  nav { display: flex; gap: 2px; margin-left: auto; flex-wrap: wrap; }
+  nav button { display: flex; align-items: center; gap: 7px; background: none; border: 0;
+    color: var(--dim); font: 500 12px/1 var(--disp); letter-spacing: .06em;
+    padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+  nav button svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+  nav button:hover { color: var(--ink); }
+  nav button.on { color: var(--bg); background: var(--cyan); }
+
+  main { padding: 20px; max-width: 1160px; }
   section { display: none; }
-  section.active { display: block; }
-  h2 { font-size: 14px; margin: 0 0 10px; color: #cbd3df; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #262c37; font-size: 13px; vertical-align: top; }
-  th { color: #8b95a3; font-weight: 500; }
-  .wrap { overflow-x: auto; }
-  form { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 18px; padding: 12px; background: #161a22; border: 1px solid #2a2f3a; border-radius: 8px; }
-  input, select { background: #0f1115; border: 1px solid #333b48; color: #e6e6e6; padding: 5px 8px; border-radius: 5px; font: inherit; }
-  button.act { background: #2f6feb; border: none; color: #fff; padding: 5px 12px; border-radius: 5px; cursor: pointer; font: inherit; }
-  button.sm { padding: 3px 8px; font-size: 12px; background: #232a36; border: 1px solid #333b48; color: #cbd3df; border-radius: 4px; cursor: pointer; }
-  button.danger { color: #ff8080; border-color: #5b2b2b; }
-  .allow { color: #4ade80; } .deny, .DENY { color: #f87171; }
-  .risk-hi { color: #f87171; font-weight: 600; } .risk-md { color: #fbbf24; }
-  .muted { color: #8b95a3; } .err { color: #f87171; white-space: pre-wrap; }
-  code { background: #1c222c; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-  textarea { width: 100%; min-height: 90px; background: #0f1115; border: 1px solid #333b48; color: #e6e6e6; border-radius: 5px; font: 12px/1.4 ui-monospace, monospace; padding: 8px; }
+  section.on { display: block; }
+
+  .head { font: 600 18px/1.2 var(--disp); letter-spacing: .04em; margin: 0 0 4px; }
+  .sub { color: var(--dim); font-size: 12px; margin: 0 0 16px; max-width: 68ch; }
+  .tools { display: flex; gap: 8px; align-items: center; margin: 0 0 14px; flex-wrap: wrap; }
+  .link-danger { background: none; border: 0; color: var(--deny); font: 400 11px/1 var(--mono);
+    cursor: pointer; opacity: .8; }
+  .link-danger:hover { opacity: 1; text-decoration: underline; }
+  .ghost { background: none; border: 1px solid var(--line); color: var(--dim);
+    font: 500 11px/1 var(--disp); letter-spacing: .05em; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+  .ghost:hover { color: var(--ink); border-color: var(--cyan); }
+
+  /* ---- command wall (Feed only) ---- */
+  .wall { display: grid; grid-template-columns: 200px 1fr; gap: 14px; margin: 0 0 20px; }
+  .gauge { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .gauge svg { width: 128px; height: 128px; transform: rotate(-90deg); }
+  .gauge .track { stroke: var(--line); }
+  .gauge .val { stroke: var(--allow); stroke-linecap: round;
+    transition: stroke-dashoffset .9s cubic-bezier(.2,.8,.2,1); }
+  .gauge figcaption { margin-top: 10px; text-align: center; }
+  .gauge .pct { font: 700 26px/1 var(--disp); color: var(--ink); }
+  .gauge .lbl { font-size: 11px; color: var(--dim); }
+  .wall-right { display: flex; flex-direction: column; gap: 14px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .tile .row1 { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 11px; }
+  .tile .row1 svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+  .tile .n { font: 700 30px/1.1 var(--disp); color: var(--ink); margin-top: 6px; }
+  .tile.allow .n { color: var(--allow); } .tile.deny .n { color: var(--deny); }
+  .tile.events .n { color: var(--amber); } .tile.events .row1 { color: var(--amber); }
+  .strip-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .strip-wrap .cap { color: var(--dim); font-size: 11px; margin-bottom: 10px; }
+  .strip { display: flex; gap: 2px; align-items: flex-end; height: 42px; }
+  .strip i { flex: 1; border-radius: 1px; background: var(--allow); min-width: 2px; }
+  .strip i.d { background: var(--deny); }
+  .strip.empty { color: var(--dim); font-size: 12px; height: auto; }
+
+  /* ---- tables ---- */
+  .wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font: 500 11px/1 var(--disp); letter-spacing: .07em; color: var(--dim);
+    padding: 11px 12px; background: var(--panel-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--panel); }
+  .id { color: var(--cyan); }
+  .dim { color: var(--dim); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .risk-hi { color: var(--deny); font-weight: 500; }
+  .risk-md { color: var(--amber); }
+  .stamp { display: inline-block; font: 500 11px/1 var(--mono); letter-spacing: .1em;
+    padding: 4px 7px; border-radius: 3px; border: 1px solid; }
+  .stamp.allow { color: var(--allow); border-color: color-mix(in srgb, var(--allow) 40%, transparent);
+    background: color-mix(in srgb, var(--allow) 12%, transparent); }
+  .stamp.deny { color: var(--deny); border-color: color-mix(in srgb, var(--deny) 40%, transparent);
+    background: color-mix(in srgb, var(--deny) 12%, transparent); }
+
+  /* ---- forms ---- */
+  form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 0 0 18px; }
+  input, select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+    font: 400 12px/1 var(--mono); padding: 8px 10px; border-radius: 4px; }
+  input::placeholder { color: var(--dim); }
+  .primary { background: var(--cyan); border: 1px solid var(--cyan); color: var(--bg);
+    font: 600 12px/1 var(--disp); letter-spacing: .05em; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+  .primary:hover { filter: brightness(1.1); }
+  .cell-btn { background: none; border: 1px solid var(--line); color: var(--dim);
+    font: 400 11px/1 var(--mono); padding: 4px 8px; border-radius: 3px; cursor: pointer; }
+  .cell-btn:hover { color: var(--ink); border-color: var(--cyan); }
+  .cell-btn.d:hover { color: var(--deny); border-color: var(--deny); }
+  .actions { display: flex; gap: 4px; }
+  textarea { width: 100%; min-height: 96px; background: var(--panel-2); border: 1px solid var(--line);
+    color: var(--ink); border-radius: 4px; font: 400 12px/1.5 var(--mono); padding: 10px; }
+  label.fld { color: var(--dim); font-size: 11px; }
+  #eval-out { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px; font: 400 12px/1.5 var(--mono); color: var(--ink); white-space: pre-wrap;
+    overflow-x: auto; min-height: 20px; }
+
+  @media (max-width: 720px) {
+    .wall { grid-template-columns: 1fr; } .tiles { grid-template-columns: repeat(2, 1fr); }
+    nav { width: 100%; margin: 6px 0 0; } .bar { height: auto; padding: 10px 16px; flex-wrap: wrap; }
+  }
+  @media (prefers-reduced-motion: reduce) { .gauge .val { transition: none; } }
 </style>
 </head>
 <body>
-<header><h1>AI-NAC Security Gateway</h1></header>
-<nav id="nav"></nav>
+<div class="bar">
+  <div class="mark">AI&#8209;NAC <b>GATEWAY</b></div>
+  <div class="live" id="live">connected</div>
+  <nav id="nav"></nav>
+</div>
+
 <main>
-  <section id="agents" class="active">
-    <h2>Agents</h2>
+  <section id="traffic" class="on">
+    <h1 class="head">Traffic</h1>
+    <p class="sub">Every request that reached the gate, newest first. Override a verdict and it becomes a policy for the next identical request.</p>
+
+    <div class="wall">
+      <figure class="gauge">
+        <svg viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="track" cx="60" cy="60" r="52" fill="none" stroke-width="10"/>
+          <circle class="val" id="gauge-val" cx="60" cy="60" r="52" fill="none" stroke-width="10"
+            stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+        </svg>
+        <figcaption><div class="pct" id="gauge-pct">&mdash;</div><div class="lbl">cleared</div></figcaption>
+      </figure>
+      <div class="wall-right">
+        <div class="tiles">
+          <div class="tile allow"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M6 10l3 3 5-6"/></svg>cleared</div><div class="n" id="k-allow">&mdash;</div></div>
+          <div class="tile deny"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M7 7l6 6M13 7l-6 6"/></svg>refused</div><div class="n" id="k-deny">&mdash;</div></div>
+          <div class="tile events"><div class="row1"><svg viewBox="0 0 20 20"><path d="M5 3v14"/><path d="M5 4h9l-2 3 2 3H5"/></svg>open events</div><div class="n" id="k-events">&mdash;</div></div>
+          <div class="tile"><div class="row1"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/></svg>agents</div><div class="n" id="k-agents">&mdash;</div></div>
+        </div>
+        <div class="strip-wrap">
+          <div class="cap">last 50 verdicts &mdash; newest on the right</div>
+          <div class="strip" id="strip"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tools">
+      <button class="ghost" onclick="loadTraffic();loadWall()">Refresh</button>
+      <button class="link-danger" onclick="delAll('logs')">Clear the log</button>
+    </div>
+    <div class="wrap"><table id="traffic-t"></table></div>
+  </section>
+
+  <section id="agents">
+    <h1 class="head">Agents</h1>
+    <p class="sub">Which AI agents may use the gateway at all. An unregistered ID never gets past the gate.</p>
     <form onsubmit="createAgent(event)">
-      <input name="agent_id" placeholder="agent_id" required>
+      <input name="agent_id" placeholder="agent id" required>
       <input name="agent_name" placeholder="name" required>
       <input name="token" placeholder="token" required>
       <select name="allowed_protocol"><option>*</option><option>mcp</option><option>a2a</option></select>
-      <input name="allowed_targets" placeholder="allowed_targets (comma sep)">
-      <button class="act">Register</button>
+      <input name="allowed_targets" placeholder="allowed targets, comma separated">
+      <button class="primary">Register agent</button>
     </form>
+    <div class="tools"><button class="link-danger" onclick="delAll('agents')">Remove every agent</button></div>
     <div class="wrap"><table id="agents-t"></table></div>
   </section>
 
   <section id="policies">
-    <h2>Policies &mdash; default deny; explicit DENY beats ALLOW, then most specific</h2>
+    <h1 class="head">Policies</h1>
+    <p class="sub">Checked against every request. An explicit refuse always wins over an allow; after that the most specific match, then the lowest priority number.</p>
     <form onsubmit="createPolicy(event)">
       <input name="name" placeholder="name" required>
-      <input name="agent_id" placeholder="agent_id" value="*">
+      <input name="agent_id" placeholder="agent id" value="*">
       <select name="protocol"><option>*</option><option>mcp</option><option>a2a</option></select>
       <input name="target" placeholder="target" value="*">
       <input name="tool" placeholder="tool" value="*">
       <select name="action"><option>ALLOW</option><option>DENY</option></select>
-      <input name="priority" type="number" value="100" style="width:70px">
-      <button class="act">Add</button>
+      <input name="priority" type="number" value="100" style="width:78px" aria-label="priority">
+      <button class="primary">Add policy</button>
     </form>
+    <div class="tools"><button class="link-danger" onclick="delAll('policies')">Remove every policy</button></div>
     <div class="wrap"><table id="policies-t"></table></div>
   </section>
 
-  <section id="traffic">
-    <h2>Traffic Monitor <button class="sm" onclick="loadTraffic()">refresh</button></h2>
-    <div class="wrap"><table id="traffic-t"></table></div>
-  </section>
-
   <section id="events">
-    <h2>Security Events <button class="sm" onclick="loadEvents()">refresh</button></h2>
+    <h1 class="head">Events</h1>
+    <p class="sub">What the inspectors flagged: poisoned tool descriptions, permission abuse, sensitive data in a payload, a tool definition that changed under a known name.</p>
+    <div class="tools"><button class="ghost" onclick="loadEvents()">Refresh</button></div>
     <div class="wrap"><table id="events-t"></table></div>
   </section>
 
   <section id="risk">
-    <h2>Risk <button class="sm" onclick="loadRisk()">refresh</button></h2>
+    <h1 class="head">Risk</h1>
+    <p class="sub">An advisory score per request, 0 to 100. It informs the verdict and gives the operator context; it never blocks anything on its own.</p>
+    <div class="tools"><button class="ghost" onclick="loadRisk()">Refresh</button></div>
     <div class="wrap"><table id="risk-t"></table></div>
   </section>
 
   <section id="evaluate">
-    <h2>Evaluate a request (runs the full pipeline, no proxy)</h2>
+    <h1 class="head">Check a request</h1>
+    <p class="sub">Send a request through the full pipeline without a proxy. It is inspected, scored and matched against policy, then logged. Nothing is forwarded anywhere.</p>
     <form onsubmit="doEval(event)" style="flex-direction:column; align-items:stretch">
-      <label class="muted">headers (JSON)</label>
+      <label class="fld">headers, as JSON</label>
       <textarea name="headers">{"X-Agent-ID": "agent-001", "X-Agent-Token": "secret"}</textarea>
-      <label class="muted">body (JSON)</label>
+      <label class="fld">body, as JSON</label>
       <textarea name="body">{"jsonrpc": "2.0", "server": "mcp-search", "params": {"name": "search", "arguments": {"q": "hello"}}}</textarea>
-      <div style="display:flex; gap:6px">
-        <input name="destination" placeholder="destination" value="mcp-search" required>
-        <button class="act">Evaluate</button>
+      <div style="display:flex; gap:8px">
+        <input name="destination" placeholder="destination" value="mcp-search" required style="flex:1">
+        <button class="primary">Run the check</button>
       </div>
     </form>
-    <pre id="eval-out" class="err"></pre>
+    <pre id="eval-out"></pre>
   </section>
 </main>
 
 <script>
-const TABS = ["agents","policies","traffic","events","risk","evaluate"];
 const $ = s => document.querySelector(s);
-
+const TABS = {
+  traffic:  {label:"Feed",     icon:'<path d="M2 10h4l2-5 3 10 2-6 1 1h4"/>',                          load:()=>{loadTraffic();loadWall();}},
+  agents:   {label:"Agents",   icon:'<rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/>', load:loadAgents},
+  policies: {label:"Policies", icon:'<path d="M10 2l6 3v5c0 4-3 6-6 7-3-1-6-3-6-7V5z"/><path d="M7 10l2 2 4-4"/>', load:loadPolicies},
+  events:   {label:"Events",   icon:'<path d="M10 3l8 14H2z"/><path d="M10 8v4M10 15v.4"/>',              load:loadEvents},
+  risk:     {label:"Risk",     icon:'<path d="M3 14a7 7 0 0114 0"/><path d="M10 14l4-3"/>',              load:loadRisk},
+  evaluate: {label:"Check",    icon:'<path d="M8 3v5l-4 7a2 2 0 002 2h8a2 2 0 002-2l-4-7V3M7 3h6"/>',    load:()=>{}},
+};
 const nav = $("#nav");
-TABS.forEach((t,i) => {
+Object.entries(TABS).forEach(([id, t], i) => {
   const b = document.createElement("button");
-  b.textContent = t[0].toUpperCase() + t.slice(1);
-  b.onclick = () => show(t);
-  if (i === 0) b.className = "active";
+  b.innerHTML = `<svg viewBox="0 0 20 20">${t.icon}</svg>${t.label}`;
+  b.onclick = () => show(id);
+  if (i === 0) b.className = "on";
   nav.appendChild(b);
 });
-function show(t) {
-  TABS.forEach(x => {
-    $("#"+x).classList.toggle("active", x === t);
-    nav.children[TABS.indexOf(x)].classList.toggle("active", x === t);
+function show(id) {
+  Object.keys(TABS).forEach((x, i) => {
+    $("#" + x).classList.toggle("on", x === id);
+    nav.children[i].classList.toggle("on", x === id);
   });
-  ({agents:loadAgents, policies:loadPolicies, traffic:loadTraffic, events:loadEvents, risk:loadRisk}[t] || (()=>{}))();
+  TABS[id].load();
 }
 
 async function api(path, opts) {
   const r = await fetch("/api" + path, opts);
+  $("#live").classList.toggle("down", !r.ok && r.status >= 500);
   if (!r.ok) throw new Error(await r.text());
   return r.status === 204 ? null : r.json();
 }
 const formObj = f => Object.fromEntries(new FormData(f).entries());
-function tbl(el, cols, rows, rowFn) {
-  el.innerHTML = "<tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr>" +
-    (rows.length ? rows.map(rowFn).join("") : `<tr><td colspan="${cols.length}" class="muted">none</td></tr>`);
-}
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const fmt = s => String(s ?? "").replace("T", " ").slice(0, 19);
 const riskCls = n => n >= 60 ? "risk-hi" : n >= 30 ? "risk-md" : "";
+function tbl(el, cols, rows, rowFn) {
+  el.innerHTML = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>" +
+    (rows.length ? rows.map(rowFn).join("")
+                 : `<tr><td class="dim" colspan="${cols.length}">Nothing here yet.</td></tr>`) + "</tbody>";
+}
 
-// ---- Agents ----
+// ---- command wall ----
+const RING = 326.7;
+async function loadWall() {
+  let logs = [], events = [], agents = [];
+  try { [logs, events, agents] = await Promise.all([
+    api("/logs?limit=500"), api("/events?limit=500"), api("/agents")]); } catch {}
+  const allow = logs.filter(l => l.decision === "ALLOW").length;
+  const deny  = logs.filter(l => l.decision === "DENY").length;
+  const open  = events.filter(e => e.status === "open").length;
+  const pct = allow + deny ? Math.round(allow / (allow + deny) * 100) : 0;
+  $("#k-allow").textContent = allow;
+  $("#k-deny").textContent = deny;
+  $("#k-events").textContent = open;
+  $("#k-agents").textContent = agents.length;
+  $("#gauge-pct").textContent = allow + deny ? pct + "%" : "—";
+  $("#gauge-val").style.strokeDashoffset = RING * (1 - pct / 100);
+  const strip = $("#strip"), recent = logs.slice(0, 50).reverse();
+  strip.className = "strip" + (recent.length ? "" : " empty");
+  strip.innerHTML = recent.length
+    ? recent.map(l => `<i class="${l.decision === "DENY" ? "d" : ""}" title="${esc(l.decision)} ${esc(fmt(l.timestamp))}"></i>`).join("")
+    : "No requests logged yet.";
+}
+
+// ---- agents ----
 async function loadAgents() {
   const rows = await api("/agents");
-  tbl($("#agents-t"), ["agent_id","name","status","protocol","targets","created","",""], rows, a => `<tr>
-    <td><code>${esc(a.agent_id)}</code></td><td>${esc(a.agent_name)}</td>
-    <td class="${a.status==='active'?'allow':'deny'}">${a.status}</td>
-    <td>${esc(a.allowed_protocol)}</td><td>${esc(a.allowed_targets)}</td>
-    <td class="muted">${esc((a.created_at||'').slice(0,19))}</td>
-    <td><button class="sm" onclick="toggleAgent('${a.agent_id}','${a.status}')">${a.status==='active'?'disable':'enable'}</button></td>
-    <td><button class="sm danger" onclick="delAgent('${a.agent_id}')">delete</button></td></tr>`);
+  tbl($("#agents-t"), ["Agent","Name","Status","Protocol","Targets","Token","Registered","",""], rows, a => `<tr>
+    <td class="id">${esc(a.agent_id)}</td><td>${esc(a.agent_name)}</td>
+    <td class="${a.status === 'active' ? 'id' : 'risk-hi'}">${esc(a.status)}</td>
+    <td>${esc(a.allowed_protocol)}</td><td class="dim">${esc(a.allowed_targets) || "—"}</td>
+    <td class="${a.has_token ? '' : 'risk-hi'}">${a.has_token ? "set" : "none"}</td>
+    <td class="dim">${esc(fmt(a.created_at))}</td>
+    <td class="actions">
+      <button class="cell-btn" onclick="resetToken('${a.agent_id}')">Reset token</button>
+      <button class="cell-btn" onclick="toggleAgent('${a.agent_id}','${a.status}')">${a.status === 'active' ? 'Disable' : 'Enable'}</button>
+    </td>
+    <td><button class="cell-btn d" onclick="delAgent('${a.agent_id}')">Delete</button></td></tr>`);
+}
+async function resetToken(id) {
+  const t = prompt("New token for " + id + ":");
+  if (!t) return;
+  try { await api(`/agents/${id}?token=${encodeURIComponent(t)}`, {method:"PUT"}); alert("Token updated for " + id + "."); loadAgents(); }
+  catch (x) { alert(x.message); }
+}
+async function delAll(kind) {
+  if (!confirm(`Delete every ${kind === 'logs' ? 'log row' : kind.replace(/s$/, '')}? This cannot be undone.`)) return;
+  await api("/" + kind, {method:"DELETE"});
+  ({agents:loadAgents, policies:loadPolicies, logs:()=>{loadTraffic();loadWall();}}[kind])();
 }
 async function createAgent(e) {
   e.preventDefault();
@@ -146,27 +328,27 @@ async function createAgent(e) {
     e.target.reset(); loadAgents(); } catch (x) { alert(x.message); }
 }
 async function toggleAgent(id, status) {
-  await api(`/agents/${id}?status=${status==='active'?'disabled':'active'}`, {method:"PUT"});
+  await api(`/agents/${id}?status=${status === 'active' ? 'disabled' : 'active'}`, {method:"PUT"});
   loadAgents();
 }
-async function delAgent(id) { if (confirm("delete "+id+"?")) { await api(`/agents/${id}`, {method:"DELETE"}); loadAgents(); } }
+async function delAgent(id) { if (confirm("Delete " + id + "?")) { await api(`/agents/${id}`, {method:"DELETE"}); loadAgents(); } }
 
-// ---- Policies ----
+// ---- policies ----
 async function loadPolicies() {
   const rows = await api("/policies");
-  tbl($("#policies-t"), ["id","name","agent","proto","target","tool","action","prio","enabled","",""], rows, p => `<tr>
-    <td>${p.policy_id}</td><td>${esc(p.name)}</td><td><code>${esc(p.agent_id)}</code></td>
+  tbl($("#policies-t"), ["ID","Name","Agent","Protocol","Target","Tool","Action","Priority","Enabled","",""], rows, p => `<tr>
+    <td class="dim">${p.policy_id}</td><td>${esc(p.name)}</td><td class="id">${esc(p.agent_id)}</td>
     <td>${esc(p.protocol)}</td><td>${esc(p.target)}</td><td>${esc(p.tool)}</td>
-    <td class="${p.action}">${p.action}</td><td>${p.priority}</td>
-    <td>${p.enabled ? "yes" : "no"}</td>
-    <td><button class="sm" onclick='togglePolicy(${JSON.stringify(p)})'>${p.enabled?"disable":"enable"}</button></td>
-    <td><button class="sm danger" onclick="delPolicy(${p.policy_id})">delete</button></td></tr>`);
+    <td class="${p.action === 'DENY' ? 'risk-hi' : 'id'}">${esc(p.action)}</td>
+    <td class="num">${p.priority}</td><td class="dim">${p.enabled ? "yes" : "no"}</td>
+    <td><button class="cell-btn" onclick='togglePolicy(${JSON.stringify(p)})'>${p.enabled ? "Disable" : "Enable"}</button></td>
+    <td><button class="cell-btn d" onclick="delPolicy(${p.policy_id})">Delete</button></td></tr>`);
 }
 async function createPolicy(e) {
   e.preventDefault();
   const o = formObj(e.target); o.priority = +o.priority; o.enabled = true;
   try { await api("/policies", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(o)});
-    loadPolicies(); } catch (x) { alert(x.message); }
+    e.target.reset(); loadPolicies(); } catch (x) { alert(x.message); }
 }
 async function togglePolicy(p) {
   const body = {name:p.name, agent_id:p.agent_id, protocol:p.protocol, target:p.target, tool:p.tool,
@@ -174,66 +356,66 @@ async function togglePolicy(p) {
   await api(`/policies/${p.policy_id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   loadPolicies();
 }
-async function delPolicy(id) { if (confirm("delete policy "+id+"?")) { await api(`/policies/${id}`, {method:"DELETE"}); loadPolicies(); } }
+async function delPolicy(id) { if (confirm("Delete policy " + id + "?")) { await api(`/policies/${id}`, {method:"DELETE"}); loadPolicies(); } }
 
-// ---- Traffic ----
+// ---- traffic ----
 async function loadTraffic() {
   const rows = await api("/logs?limit=200");
-  tbl($("#traffic-t"), ["time","agent","proto","destination","tool","risk","policy","decision","reason",""], rows, l => `<tr>
-    <td class="muted">${esc((l.timestamp||'').slice(11,19))}</td>
-    <td><code>${esc(l.agent_id)}</code></td><td>${esc(l.protocol)}</td>
-    <td>${esc(l.destination)}</td><td>${esc(l.tool)}</td>
-    <td class="${riskCls(l.risk_score)}">${l.risk_score ?? ''}</td>
-    <td>${l.policy_id ?? ''}</td>
-    <td class="${l.decision}">${esc(l.decision)}</td>
-    <td class="muted">${esc(l.reason)}</td>
-    <td>
-      <button class="sm" onclick="decide(${l.log_id},'ALLOW')">ALLOW</button>
-      <button class="sm danger" onclick="decide(${l.log_id},'BLOCK')">BLOCK</button>
-      <button class="sm danger" onclick="delLog(${l.log_id})">delete</button>
+  tbl($("#traffic-t"), ["Verdict","Time","Agent","Protocol","Destination","Tool","Risk","Policy","Reason",""], rows, l => `<tr>
+    <td><span class="stamp ${l.decision === 'DENY' ? 'deny' : 'allow'}">${esc(l.decision || '—')}</span></td>
+    <td class="dim">${esc(fmt(l.timestamp))}</td>
+    <td class="id">${esc(l.agent_id) || '—'}</td><td>${esc(l.protocol) || '—'}</td>
+    <td>${esc(l.destination) || '—'}</td><td>${esc(l.tool) || '—'}</td>
+    <td class="num ${riskCls(l.risk_score)}">${l.risk_score ?? '—'}</td>
+    <td class="num dim">${l.policy_id ?? '—'}</td>
+    <td class="dim">${esc(l.reason)}</td>
+    <td class="actions">
+      <button class="cell-btn" onclick="decide(${l.log_id},'ALLOW')">Allow</button>
+      <button class="cell-btn d" onclick="decide(${l.log_id},'BLOCK')">Block</button>
+      <button class="cell-btn d" onclick="delLog(${l.log_id})">Delete</button>
     </td></tr>`);
 }
-async function delLog(id) { if (confirm("delete log "+id+"?")) { await api(`/logs/${id}`, {method:"DELETE"}); loadTraffic(); } }
+async function delLog(id) { if (confirm("Delete log " + id + "?")) { await api(`/logs/${id}`, {method:"DELETE"}); loadTraffic(); loadWall(); } }
 async function decide(id, decision) {
-  const reason = prompt(`${decision} request ${id} — reason:`, "admin decision");
+  const reason = prompt(`${decision === 'ALLOW' ? 'Allow' : 'Block'} request ${id}. Reason (saved as a policy):`, "operator override");
   if (reason === null) return;
   await api(`/decisions/${id}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({decision, reason})});
-  loadTraffic();
+  loadTraffic(); loadWall();
 }
 
-// ---- Events ----
+// ---- events ----
 async function loadEvents() {
   const rows = await api("/events?limit=200");
-  tbl($("#events-t"), ["time","agent","type","severity","target","risk","reason","status"], rows, e => `<tr>
-    <td class="muted">${esc((e.timestamp||'').slice(11,19))}</td>
-    <td><code>${esc(e.agent_id)}</code></td><td>${esc(e.event_type)}</td>
-    <td class="${e.severity==='high'?'deny':''}">${esc(e.severity)}</td>
-    <td>${esc(e.target)}</td><td class="${riskCls(e.risk_score)}">${e.risk_score ?? ''}</td>
-    <td class="muted">${esc(e.reason)}</td><td>${esc(e.status)}</td></tr>`);
+  tbl($("#events-t"), ["Time","Agent","Type","Severity","Target","Risk","Reason","Status"], rows, e => `<tr>
+    <td class="dim">${esc(fmt(e.timestamp))}</td><td class="id">${esc(e.agent_id) || '—'}</td>
+    <td>${esc(e.event_type)}</td>
+    <td class="${e.severity === 'high' ? 'risk-hi' : e.severity === 'medium' ? 'risk-md' : ''}">${esc(e.severity)}</td>
+    <td>${esc(e.target) || '—'}</td><td class="num ${riskCls(e.risk_score)}">${e.risk_score ?? '—'}</td>
+    <td class="dim">${esc(e.reason)}</td><td>${esc(e.status)}</td></tr>`);
 }
 
-// ---- Risk ----
+// ---- risk ----
 async function loadRisk() {
   const rows = await api("/risk?limit=200");
-  tbl($("#risk-t"), ["log","agent","target","tool","risk","decision","reason"], rows, r => `<tr>
-    <td>${r.log_id}</td><td><code>${esc(r.agent_id)}</code></td>
-    <td>${esc(r.target)}</td><td>${esc(r.tool)}</td>
-    <td class="${riskCls(r.risk_score)}">${r.risk_score ?? ''}</td>
-    <td class="${r.decision}">${esc(r.decision)}</td>
-    <td class="muted">${esc(r.reason)}</td></tr>`);
+  tbl($("#risk-t"), ["Log","Agent","Target","Tool","Risk","Verdict","Reason"], rows, r => `<tr>
+    <td class="dim">${r.log_id}</td><td class="id">${esc(r.agent_id) || '—'}</td>
+    <td>${esc(r.target) || '—'}</td><td>${esc(r.tool) || '—'}</td>
+    <td class="num ${riskCls(r.risk_score)}">${r.risk_score ?? '—'}</td>
+    <td class="${r.decision === 'DENY' ? 'risk-hi' : 'id'}">${esc(r.decision)}</td>
+    <td class="dim">${esc(r.reason)}</td></tr>`);
 }
 
-// ---- Evaluate ----
+// ---- check ----
 async function doEval(e) {
   e.preventDefault();
   const o = formObj(e.target), out = $("#eval-out");
   try {
     const payload = {headers: JSON.parse(o.headers), body: JSON.parse(o.body), destination: o.destination, source: "dashboard"};
     out.textContent = JSON.stringify(await api("/evaluate", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)}), null, 2);
-  } catch (x) { out.textContent = x.message; }
+  } catch (x) { out.textContent = "Could not run the check: " + x.message; }
 }
 
-loadAgents();
+show("traffic");
 </script>
 </body>
 </html>
