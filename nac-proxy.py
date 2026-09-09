@@ -39,7 +39,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 DB_PATH = Path(__file__).with_name("nac.db")
 
@@ -183,7 +183,8 @@ def authenticate_agent(headers: dict[str, str]) -> AuthResult:
 @dataclass
 class InspectionResult:
     protocol: str                  # mcp | a2a | unknown
-    target: str = ""
+    target: str = ""               # authoritative: the real request destination
+    claimed_target: str = ""       # what the request body says it's talking to
     tool: str = ""
     tool_description: str = ""
     arguments: dict = field(default_factory=dict)
@@ -208,7 +209,8 @@ class MCPInspector:
         args = params.get("arguments", {}) or {}
         return InspectionResult(
             protocol="mcp",
-            target=body.get("server", destination),
+            target=destination,
+            claimed_target=body.get("server", ""),
             tool=tool,
             tool_description=params.get("tool_description", ""),
             arguments=args,
@@ -224,7 +226,8 @@ class A2AInspector:
         payload = body.get("payload", {}) or {}
         return InspectionResult(
             protocol="a2a",
-            target=body.get("target_agent", destination),
+            target=destination,
+            claimed_target=body.get("target_agent", ""),
             tool=body.get("skill", ""),
             tool_description=body.get("skill_description", ""),
             arguments=payload,
@@ -331,6 +334,8 @@ def check_rug_pull(target: str, tool: str, description: str, arguments: dict) ->
 
 def run_security_analyzers(target: str, insp: InspectionResult) -> SecurityFindings:
     f = SecurityFindings()
+    if insp.claimed_target and insp.claimed_target != insp.target:
+        f.notes.append("TARGET_MISMATCH")
     if check_tool_poisoning(insp.tool_description):
         f.tool_poisoning = True
         f.notes.append("TOOL_POISONING_SUSPECTED")
@@ -364,6 +369,10 @@ def calculate_risk(agent_row: sqlite3.Row, insp: InspectionResult, findings: Sec
     if allowed_targets and insp.target not in allowed_targets:
         score += 20
         factors.append("+20 unregistered/external target")
+
+    if insp.claimed_target and insp.claimed_target != insp.target:
+        score += 20
+        factors.append("+20 claimed target != actual destination (spoofing)")
 
     tool = insp.tool.lower()
     if "shell" in tool or "execute" in insp.permissions or "shell" in insp.permissions:
@@ -499,7 +508,7 @@ def evaluate_request(headers: dict[str, str], body: dict, *, source: str,
         return EvaluationResult("DENY", f"engine error (fail-closed): {exc}", 0, [], ["ENGINE_ERROR"], log_id)
 
     for note in findings.notes:
-        severity = "high" if note in ("TOOL_POISONING_SUSPECTED", "RUG_PULL_DETECTED") else "medium"
+        severity = "high" if note in ("TOOL_POISONING_SUSPECTED", "RUG_PULL_DETECTED", "TARGET_MISMATCH") else "medium"
         write_event(agent["agent_id"], note, severity, insp.target, risk.score, "; ".join(risk.factors))
 
     log_id = write_log(
@@ -549,19 +558,39 @@ try:
             if flow.request.method == "CONNECT":
                 return  # TLS tunnel setup, not an inspectable AI-NAC request
 
-            result = evaluate_request(
-                dict(flow.request.headers),
-                _parse_body(flow),
-                source=_client_ip(flow),
-                destination=flow.request.pretty_host,
-                method=flow.request.method,
-            )
+            try:
+                result = evaluate_request(
+                    dict(flow.request.headers),
+                    _parse_body(flow),
+                    source=_client_ip(flow),
+                    destination=flow.request.pretty_host,
+                    method=flow.request.method,
+                )
+            except Exception as exc:  # noqa: BLE001 - fail closed on ANY failure (DB locked, engine bug)
+                try:
+                    hdrs = {k.lower(): v for k, v in flow.request.headers.items()}
+                    write_event(hdrs.get("x-agent-id"), "ENGINE_ERROR", "high",
+                                flow.request.pretty_host, 0, str(exc))
+                except Exception:
+                    pass
+                flow.response = _mitm_http.Response.make(
+                    403,
+                    json.dumps({"error": "AI-NAC: access denied",
+                                "reason": f"engine error (fail-closed): {exc}"}).encode(),
+                    {"Content-Type": "application/json"},
+                )
+                return
+
+            # AI-NAC's own auth headers must never reach the external destination.
+            flow.request.headers.pop("X-Agent-Token", None)
+            flow.request.headers.pop("X-Agent-ID", None)
+
             # Correlate this flow with its log row for traceability
             # (no schema change: mitmproxy's own flow id, kept in metadata only).
             flow.metadata["nac_log_id"] = result.log_id
             flow.metadata["nac_decision"] = result.decision
 
-            if result.decision == "DENY":
+            if result.decision != "ALLOW":  # only an explicit ALLOW is forwarded
                 flow.response = _mitm_http.Response.make(
                     403,
                     json.dumps({"error": "AI-NAC: access denied", "reason": result.reason,
@@ -620,7 +649,7 @@ def build_api():
         protocol: str = "*"
         target: str = "*"
         tool: str = "*"
-        action: str  # ALLOW | DENY
+        action: Literal["ALLOW", "DENY"]
         priority: int = 100
         enabled: bool = True
         description: str = ""
@@ -742,6 +771,12 @@ def build_api():
             raise HTTPException(404, "log not found")
         return dict(row)
 
+    @app.delete("/api/logs/{log_id}")
+    def delete_log(log_id: int):
+        with db() as conn:
+            conn.execute("DELETE FROM logs WHERE log_id=?", (log_id,))
+        return {"status": "deleted"}
+
     @app.get("/api/events")
     def list_events(limit: int = 100):
         with db() as conn:
@@ -801,6 +836,9 @@ def build_api():
 
 def _selftest() -> None:
     import os
+    import tempfile
+    global DB_PATH
+    DB_PATH = Path(tempfile.gettempdir()) / "nac-selftest.db"  # never touch the real nac.db
     if DB_PATH.exists():
         os.remove(DB_PATH)
     init_db()

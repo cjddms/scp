@@ -190,8 +190,10 @@ async function loadTraffic() {
     <td>
       <button class="sm" onclick="decide(${l.log_id},'ALLOW')">ALLOW</button>
       <button class="sm danger" onclick="decide(${l.log_id},'BLOCK')">BLOCK</button>
+      <button class="sm danger" onclick="delLog(${l.log_id})">delete</button>
     </td></tr>`);
 }
+async function delLog(id) { if (confirm("delete log "+id+"?")) { await api(`/logs/${id}`, {method:"DELETE"}); loadTraffic(); } }
 async function decide(id, decision) {
   const reason = prompt(`${decision} request ${id} — reason:`, "admin decision");
   if (reason === null) return;
