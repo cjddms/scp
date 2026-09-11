@@ -1,0 +1,68 @@
+name: ai-nac-demo
+x-app: &app
+  image: ai-nac-demo:local
+  build:
+    context: ..
+    dockerfile: docker-test/Dockerfile
+services:
+  admin:
+    <<: *app
+    ports:
+      - "127.0.0.1:18000:8000"
+    volumes:
+      - demo-data:/data
+    networks:
+      demo:
+        ipv4_address: 172.30.88.10
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/agents', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  proxy:
+    <<: *app
+    command: ["mitmdump", "-s", "/app/nac-proxy.py", "--listen-host", "0.0.0.0", "-p", "8080"]
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - demo-data:/data
+    depends_on:
+      admin:
+        condition: service_healthy
+    networks:
+      demo:
+        ipv4_address: 172.30.88.20
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1',8080),2).close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  target:
+    <<: *app
+    command: ["python", "/app/docker-test/target.py"]
+    networks:
+      demo:
+        ipv4_address: 172.30.88.30
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  agent:
+    <<: *app
+    command: ["python", "-c", "import time; time.sleep(100000000)"]
+    depends_on:
+      proxy:
+        condition: service_healthy
+      target:
+        condition: service_healthy
+    networks:
+      demo:
+        ipv4_address: 172.30.88.40
+volumes:
+  demo-data:
+networks:
+  demo:
+    ipam:
+      config:
+        - subnet: 172.30.88.0/24
