@@ -48,6 +48,7 @@
   .link-danger { background: none; border: 0; color: var(--deny); font: 400 11px/1 var(--mono);
     cursor: pointer; opacity: .8; }
   .link-danger:hover { opacity: 1; text-decoration: underline; }
+  .link-danger:disabled { opacity: .3; cursor: not-allowed; text-decoration: none; }
   .ghost { background: none; border: 1px solid var(--line); color: var(--dim);
     font: 500 11px/1 var(--disp); letter-spacing: .05em; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
   .ghost:hover { color: var(--ink); border-color: var(--cyan); }
@@ -163,9 +164,46 @@
 
     <div class="tools">
       <button class="ghost" onclick="loadTraffic();loadWall()">Refresh</button>
+      <button id="delete-selected-logs" class="link-danger" onclick="deleteSelected('logs')" disabled>Delete selected</button>
+      <span id="selected-count-logs" class="dim"></span>
       <button class="link-danger" onclick="delAll('logs')">Clear the log</button>
     </div>
     <div class="wrap"><table id="traffic-t"></table></div>
+  </section>
+
+  <section id="responses">
+    <h1 class="head">Responses</h1>
+    <p class="sub">Upstream responses are default-allow. Explicit response policy matches are observed in MONITOR mode and blocked in ENFORCE mode.</p>
+    <div class="tools">
+      <label class="fld" for="response-mode">Enforcement</label>
+      <select id="response-mode" onchange="setResponseMode(this.value)"><option>MONITOR</option><option>ENFORCE</option></select>
+      <button class="ghost" onclick="loadResponses()">Refresh</button>
+    </div>
+    <div class="wrap"><table id="responses-t"></table></div>
+
+    <h2 class="head" style="margin-top:24px">Response policies</h2>
+    <p class="sub">Match the authenticated requester, observed upstream destination and a response finding. More specific rules win before priority; DENY wins only an exact tie.</p>
+    <form onsubmit="createResponsePolicy(event)">
+      <input name="name" placeholder="name" required>
+      <input name="agent_id" placeholder="agent id" value="*">
+      <select name="protocol"><option>*</option><option>mcp</option><option>a2a</option></select>
+      <input name="target" placeholder="target host:port" value="*">
+      <input name="tool" placeholder="tool" value="*">
+      <select name="finding">
+        <option>*</option><option>RESPONSE_SENSITIVE_DATA</option><option>JSONRPC_ID_MISMATCH</option>
+        <option>INVALID_JSON_RESPONSE</option><option>UNEXPECTED_CONTENT_TYPE</option>
+        <option>RESPONSE_STREAMING_SKIPPED</option><option>RESPONSE_TOO_LARGE_SKIPPED</option>
+      </select>
+      <select name="action"><option>DENY</option><option>ALLOW</option></select>
+      <input name="priority" type="number" value="100" style="width:78px" aria-label="priority">
+      <button class="primary">Add response policy</button>
+    </form>
+    <div class="tools">
+      <button id="delete-selected-response-policies" class="link-danger" onclick="deleteSelected('response-policies')" disabled>Delete selected</button>
+      <span id="selected-count-response-policies" class="dim"></span>
+      <button class="link-danger" onclick="delAll('response-policies')">Remove every response policy</button>
+    </div>
+    <div class="wrap"><table id="response-policies-t"></table></div>
   </section>
 
   <section id="agents">
@@ -175,11 +213,15 @@
       <input name="agent_id" placeholder="agent id" required>
       <input name="agent_name" placeholder="name" required>
       <input name="token" placeholder="token" required>
+      <input name="source_ip" placeholder="source IPv4, e.g. 192.168.56.102" required>
       <select name="allowed_protocol"><option>*</option><option>mcp</option><option>a2a</option></select>
-      <input name="allowed_targets" placeholder="allowed targets, comma separated">
       <button class="primary">Register agent</button>
     </form>
-    <div class="tools"><button class="link-danger" onclick="delAll('agents')">Remove every agent</button></div>
+    <div class="tools">
+      <button id="delete-selected-agents" class="link-danger" onclick="deleteSelected('agents')" disabled>Delete selected</button>
+      <span id="selected-count-agents" class="dim"></span>
+      <button class="link-danger" onclick="delAll('agents')">Remove every agent</button>
+    </div>
     <div class="wrap"><table id="agents-t"></table></div>
   </section>
 
@@ -190,13 +232,17 @@
       <input name="name" placeholder="name" required>
       <input name="agent_id" placeholder="agent id" value="*">
       <select name="protocol"><option>*</option><option>mcp</option><option>a2a</option></select>
-      <input name="target" placeholder="target" value="*">
+      <input name="target" placeholder="target host:port" value="*">
       <input name="tool" placeholder="tool" value="*">
       <select name="action"><option>ALLOW</option><option>DENY</option></select>
       <input name="priority" type="number" value="100" style="width:78px" aria-label="priority">
       <button class="primary">Add policy</button>
     </form>
-    <div class="tools"><button class="link-danger" onclick="delAll('policies')">Remove every policy</button></div>
+    <div class="tools">
+      <button id="delete-selected-policies" class="link-danger" onclick="deleteSelected('policies')" disabled>Delete selected</button>
+      <span id="selected-count-policies" class="dim"></span>
+      <button class="link-danger" onclick="delAll('policies')">Remove every policy</button>
+    </div>
     <div class="wrap"><table id="policies-t"></table></div>
   </section>
 
@@ -223,7 +269,8 @@
       <label class="fld">body, as JSON</label>
       <textarea name="body">{"jsonrpc": "2.0", "server": "mcp-search", "params": {"name": "search", "arguments": {"q": "hello"}}}</textarea>
       <div style="display:flex; gap:8px">
-        <input name="destination" placeholder="destination" value="mcp-search" required style="flex:1">
+        <input name="source" placeholder="source IPv4" value="192.168.56.102" required style="flex:1">
+        <input name="destination" placeholder="destination host:port" value="192.168.56.104:9000" required style="flex:1">
         <button class="primary">Run the check</button>
       </div>
     </form>
@@ -235,6 +282,7 @@
 const $ = s => document.querySelector(s);
 const TABS = {
   traffic:  {label:"Feed",     icon:'<path d="M2 10h4l2-5 3 10 2-6 1 1h4"/>',                          load:()=>{loadTraffic();loadWall();}},
+  responses:{label:"Responses",icon:'<path d="M4 4h12v9H8l-4 4z"/><path d="M7 8h6M7 11h4"/>',          load:loadResponses},
   agents:   {label:"Agents",   icon:'<rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/>', load:loadAgents},
   policies: {label:"Policies", icon:'<path d="M10 2l6 3v5c0 4-3 6-6 7-3-1-6-3-6-7V5z"/><path d="M7 10l2 2 4-4"/>', load:loadPolicies},
   events:   {label:"Events",   icon:'<path d="M10 3l8 14H2z"/><path d="M10 8v4M10 15v.4"/>',              load:loadEvents},
@@ -267,6 +315,7 @@ const formObj = f => Object.fromEntries(new FormData(f).entries());
 const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
 const fmt = s => String(s ?? "").replace("T", " ").slice(0, 19);
 const riskCls = n => n >= 60 ? "risk-hi" : n >= 30 ? "risk-md" : "";
+const selectAllHeader = kind => `<input type="checkbox" id="select-all-${kind}" aria-label="Select all ${kind}" onchange="toggleAll('${kind}', this.checked)">`;
 function tbl(el, cols, rows, rowFn) {
   el.innerHTML = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>" +
     (rows.length ? rows.map(rowFn).join("")
@@ -299,17 +348,20 @@ async function loadWall() {
 // ---- agents ----
 async function loadAgents() {
   const rows = await api("/agents");
-  tbl($("#agents-t"), ["Agent","Name","Status","Protocol","Targets","Token","Registered","",""], rows, a => `<tr>
+  tbl($("#agents-t"), [selectAllHeader("agents"),"Agent","Name","Status","Source IP","Protocol","Token","Registered","",""], rows, a => `<tr>
+    <td><input type="checkbox" class="row-select select-agents" data-id="${encodeURIComponent(a.agent_id)}" aria-label="Select agent ${esc(a.agent_id)}" onchange="syncSelection('agents')"></td>
     <td class="id">${esc(a.agent_id)}</td><td>${esc(a.agent_name)}</td>
     <td class="${a.status === 'active' ? 'id' : 'risk-hi'}">${esc(a.status)}</td>
-    <td>${esc(a.allowed_protocol)}</td><td class="dim">${esc(a.allowed_targets) || "—"}</td>
+    <td class="dim">${esc(a.source_ip) || "not configured"}</td><td>${esc(a.allowed_protocol)}</td>
     <td class="${a.has_token ? '' : 'risk-hi'}">${a.has_token ? "set" : "none"}</td>
     <td class="dim">${esc(fmt(a.created_at))}</td>
     <td class="actions">
       <button class="cell-btn" onclick="resetToken('${a.agent_id}')">Reset token</button>
+      <button class="cell-btn" onclick="setSourceIp('${a.agent_id}','${a.source_ip || ""}')">Set IP</button>
       <button class="cell-btn" onclick="toggleAgent('${a.agent_id}','${a.status}')">${a.status === 'active' ? 'Disable' : 'Enable'}</button>
     </td>
     <td><button class="cell-btn d" onclick="delAgent('${a.agent_id}')">Delete</button></td></tr>`);
+  syncSelection("agents");
 }
 async function resetToken(id) {
   const t = prompt("New token for " + id + ":");
@@ -317,10 +369,21 @@ async function resetToken(id) {
   try { await api(`/agents/${id}?token=${encodeURIComponent(t)}`, {method:"PUT"}); alert("Token updated for " + id + "."); loadAgents(); }
   catch (x) { alert(x.message); }
 }
+async function setSourceIp(id, current) {
+  const ip = prompt("Source IPv4 for " + id + ":", current || "192.168.56.102");
+  if (ip === null) return;
+  if (!ip.trim()) { alert("Source IPv4 is required."); return; }
+  try {
+    await api(`/agents/${id}?source_ip=${encodeURIComponent(ip.trim())}`, {method:"PUT"});
+    alert("Source IP updated for " + id + ".");
+    loadAgents();
+  } catch (x) { alert(x.message); loadAgents(); }
+}
 async function delAll(kind) {
   if (!confirm(`Delete every ${kind === 'logs' ? 'log row' : kind.replace(/s$/, '')}? This cannot be undone.`)) return;
   await api("/" + kind, {method:"DELETE"});
-  ({agents:loadAgents, policies:loadPolicies, logs:()=>{loadTraffic();loadWall();}}[kind])();
+  ({agents:loadAgents, policies:loadPolicies, "response-policies":loadResponses,
+    logs:()=>{loadTraffic();loadWall();loadRisk();loadResponses();}}[kind])();
 }
 async function createAgent(e) {
   e.preventDefault();
@@ -336,13 +399,15 @@ async function delAgent(id) { if (confirm("Delete " + id + "?")) { await api(`/a
 // ---- policies ----
 async function loadPolicies() {
   const rows = await api("/policies");
-  tbl($("#policies-t"), ["ID","Name","Agent","Protocol","Target","Tool","Action","Priority","Enabled","",""], rows, p => `<tr>
+  tbl($("#policies-t"), [selectAllHeader("policies"),"ID","Name","Agent","Protocol","Target","Tool","Action","Priority","Enabled","",""], rows, p => `<tr>
+    <td><input type="checkbox" class="row-select select-policies" data-id="${p.policy_id}" aria-label="Select policy ${p.policy_id}" onchange="syncSelection('policies')"></td>
     <td class="dim">${p.policy_id}</td><td>${esc(p.name)}</td><td class="id">${esc(p.agent_id)}</td>
     <td>${esc(p.protocol)}</td><td>${esc(p.target)}</td><td>${esc(p.tool)}</td>
     <td class="${p.action === 'DENY' ? 'risk-hi' : 'id'}">${esc(p.action)}</td>
     <td class="num">${p.priority}</td><td class="dim">${p.enabled ? "yes" : "no"}</td>
     <td><button class="cell-btn" onclick='togglePolicy(${JSON.stringify(p)})'>${p.enabled ? "Disable" : "Enable"}</button></td>
     <td><button class="cell-btn d" onclick="delPolicy(${p.policy_id})">Delete</button></td></tr>`);
+  syncSelection("policies");
 }
 async function createPolicy(e) {
   e.preventDefault();
@@ -361,7 +426,8 @@ async function delPolicy(id) { if (confirm("Delete policy " + id + "?")) { await
 // ---- traffic ----
 async function loadTraffic() {
   const rows = await api("/logs?limit=200");
-  tbl($("#traffic-t"), ["Verdict","Time","Agent","Protocol","Destination","Tool","Risk","Policy","Reason",""], rows, l => `<tr>
+  tbl($("#traffic-t"), [selectAllHeader("logs"),"Verdict","Time","Agent","Protocol","Destination","Tool","Risk","Policy","Reason",""], rows, l => `<tr>
+    <td><input type="checkbox" class="row-select select-logs" data-id="${l.log_id}" aria-label="Select log ${l.log_id}" onchange="syncSelection('logs')"></td>
     <td><span class="stamp ${l.decision === 'DENY' ? 'deny' : 'allow'}">${esc(l.decision || '—')}</span></td>
     <td class="dim">${esc(fmt(l.timestamp))}</td>
     <td class="id">${esc(l.agent_id) || '—'}</td><td>${esc(l.protocol) || '—'}</td>
@@ -374,13 +440,123 @@ async function loadTraffic() {
       <button class="cell-btn d" onclick="decide(${l.log_id},'BLOCK')">Block</button>
       <button class="cell-btn d" onclick="delLog(${l.log_id})">Delete</button>
     </td></tr>`);
+  syncSelection("logs");
 }
-async function delLog(id) { if (confirm("Delete log " + id + "?")) { await api(`/logs/${id}`, {method:"DELETE"}); loadTraffic(); loadWall(); } }
+
+function selectedIds(kind) {
+  return [...document.querySelectorAll(`.select-${kind}:checked`)].map(el => {
+    const value = decodeURIComponent(el.dataset.id);
+    return kind === "agents" ? value : Number(value);
+  });
+}
+function toggleAll(kind, checked) {
+  document.querySelectorAll(`.select-${kind}`).forEach(el => { el.checked = checked; });
+  syncSelection(kind);
+}
+function syncSelection(kind) {
+  const boxes = [...document.querySelectorAll(`.select-${kind}`)];
+  const selected = boxes.filter(el => el.checked).length;
+  const all = $(`#select-all-${kind}`);
+  if (all) {
+    all.checked = boxes.length > 0 && selected === boxes.length;
+    all.indeterminate = selected > 0 && selected < boxes.length;
+  }
+  $(`#delete-selected-${kind}`).disabled = selected === 0;
+  $(`#selected-count-${kind}`).textContent = selected ? `${selected} selected` : "";
+}
+async function deleteSelected(kind) {
+  const ids = selectedIds(kind);
+  if (!ids.length || !confirm(`Delete ${ids.length} selected ${kind === "logs" ? "log row(s)" : kind}? This cannot be undone.`)) return;
+  const key = {agents:"agent_ids", policies:"policy_ids", "response-policies":"response_policy_ids", logs:"log_ids"}[kind];
+  try {
+    await api(`/${kind}/bulk-delete`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({[key]:ids})
+    });
+  } catch (x) {
+    alert(x.message);
+  } finally {
+    if (kind === "agents") { await loadAgents(); await loadWall(); }
+    if (kind === "policies") await loadPolicies();
+    if (kind === "response-policies") await loadResponses();
+    if (kind === "logs") { await loadTraffic(); await loadWall(); await loadRisk(); await loadResponses(); }
+  }
+}
+async function delLog(id) { if (confirm("Delete log " + id + "?")) { await api(`/logs/${id}`, {method:"DELETE"}); loadTraffic(); loadWall(); loadRisk(); loadResponses(); } }
 async function decide(id, decision) {
   const reason = prompt(`${decision === 'ALLOW' ? 'Allow' : 'Block'} request ${id}. Reason (saved as a policy):`, "operator override");
   if (reason === null) return;
   await api(`/decisions/${id}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({decision, reason})});
   loadTraffic(); loadWall();
+}
+
+// ---- responses ----
+async function loadResponses() {
+  const [rows, policies, setting] = await Promise.all([
+    api("/responses?limit=200"), api("/response-policies"), api("/settings/response-enforcement")
+  ]);
+  $("#response-mode").value = setting.mode;
+  tbl($("#responses-t"), ["Response","Request","Time","Agent","Protocol","Destination","Method / Tool","HTTP","Type / Size","Inspected","Risk","Policy","Effective","Findings / Decision","Reason","Summary"], rows, r => `<tr>
+    <td class="dim">${r.response_id}</td><td class="dim">${r.request_log_id}</td>
+    <td class="dim">${esc(fmt(r.timestamp))}</td><td class="id">${esc(r.agent_id) || '—'}</td>
+    <td>${esc(r.protocol) || '—'}</td><td>${esc(r.destination) || '—'}</td>
+    <td>${esc(r.request_method) || '—'}${r.tool ? ` / ${esc(r.tool)}` : ''}</td>
+    <td class="num ${r.status_code >= 500 ? 'risk-hi' : ''}">${r.status_code}</td>
+    <td class="dim">${esc(r.content_type) || '—'} / ${r.body_size} B</td>
+    <td>${r.inspected ? 'yes' : 'no'} <span class="dim">${esc(r.inspection_status)}</span></td>
+    <td class="num ${riskCls(r.risk_score)}">${r.risk_score}</td>
+    <td>${r.response_policy_id ?? '—'} / <span class="${r.policy_action === 'DENY' ? 'risk-hi' : 'id'}">${esc(r.policy_action)}</span></td>
+    <td><span class="stamp ${r.effective_action === 'DENY' ? 'deny' : 'allow'}">${esc(r.effective_action)}</span> <span class="dim">${esc(r.enforcement_mode)}</span></td>
+    <td class="${r.findings.length ? 'risk-md' : 'dim'}">${r.findings.length ? r.findings.map(f => `${esc(f)} <span class="actions"><button class="cell-btn" onclick="responseDecision(${r.response_id}, '${esc(f)}', 'ALLOW')">Allow</button><button class="cell-btn d" onclick="responseDecision(${r.response_id}, '${esc(f)}', 'BLOCK')">Block</button></span>`).join('<br>') : 'none'}</td>
+    <td class="dim">${esc(r.reason)}</td>
+    <td class="dim">${esc(r.response_summary) || '—'}</td></tr>`);
+  loadResponsePolicies(policies);
+}
+async function setResponseMode(mode) {
+  if (mode === "ENFORCE" && !confirm("Enable response enforcement? Matching DENY policies will replace upstream responses with HTTP 403.")) {
+    $("#response-mode").value = "MONITOR"; return;
+  }
+  try {
+    await api("/settings/response-enforcement", {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify({mode})});
+  } catch (x) { alert(x.message); await loadResponses(); }
+}
+function loadResponsePolicies(rows) {
+  tbl($("#response-policies-t"), [selectAllHeader("response-policies"),"ID","Name","Agent","Protocol","Target","Tool","Finding","Action","Priority","Enabled","",""], rows, p => `<tr>
+    <td><input type="checkbox" class="row-select select-response-policies" data-id="${p.response_policy_id}" aria-label="Select response policy ${p.response_policy_id}" onchange="syncSelection('response-policies')"></td>
+    <td class="dim">${p.response_policy_id}</td><td>${esc(p.name)}</td><td class="id">${esc(p.agent_id)}</td>
+    <td>${esc(p.protocol)}</td><td>${esc(p.target)}</td><td>${esc(p.tool)}</td><td>${esc(p.finding)}</td>
+    <td class="${p.action === 'DENY' ? 'risk-hi' : 'id'}">${esc(p.action)}</td><td class="num">${p.priority}</td>
+    <td class="dim">${p.enabled ? 'yes' : 'no'}</td>
+    <td><button class="cell-btn" onclick='toggleResponsePolicy(${JSON.stringify(p)})'>${p.enabled ? 'Disable' : 'Enable'}</button></td>
+    <td><button class="cell-btn d" onclick="delResponsePolicy(${p.response_policy_id})">Delete</button></td></tr>`);
+  syncSelection("response-policies");
+}
+async function createResponsePolicy(e) {
+  e.preventDefault();
+  const o = formObj(e.target); o.priority = +o.priority; o.enabled = true;
+  try {
+    await api("/response-policies", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(o)});
+    e.target.reset(); await loadResponses();
+  } catch (x) { alert(x.message); }
+}
+async function toggleResponsePolicy(p) {
+  const body = {name:p.name, agent_id:p.agent_id, protocol:p.protocol, target:p.target,
+    tool:p.tool, finding:p.finding, action:p.action, priority:p.priority,
+    enabled:!p.enabled, description:p.description || ""};
+  await api(`/response-policies/${p.response_policy_id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  loadResponses();
+}
+async function delResponsePolicy(id) {
+  if (confirm("Delete response policy " + id + "?")) {
+    await api(`/response-policies/${id}`, {method:"DELETE"}); loadResponses();
+  }
+}
+async function responseDecision(id, finding, decision) {
+  const reason = prompt(`${decision === 'ALLOW' ? 'Allow' : 'Block'} ${finding} for response ${id}. Reason:`, "operator response decision");
+  if (reason === null) return;
+  await api(`/response-decisions/${id}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({decision, finding, reason})});
+  loadResponses();
 }
 
 // ---- events ----
@@ -410,7 +586,7 @@ async function doEval(e) {
   e.preventDefault();
   const o = formObj(e.target), out = $("#eval-out");
   try {
-    const payload = {headers: JSON.parse(o.headers), body: JSON.parse(o.body), destination: o.destination, source: "dashboard"};
+    const payload = {headers: JSON.parse(o.headers), body: JSON.parse(o.body), destination: o.destination, source: o.source};
     out.textContent = JSON.stringify(await api("/evaluate", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)}), null, 2);
   } catch (x) { out.textContent = "Could not run the check: " + x.message; }
 }
