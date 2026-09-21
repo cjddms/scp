@@ -1,0 +1,11 @@
+{
+  "model_id": "protectai/deberta-v3-base-prompt-injection-v2",
+  "revision": "90c9989",
+  "sha256": {
+    "model.onnx": "REPLACE_WITH_VERIFIED_SHA256",
+    "config.json": "REPLACE_WITH_VERIFIED_SHA256",
+    "tokenizer.json": "REPLACE_WITH_VERIFIED_SHA256",
+    "tokenizer_config.json": "REPLACE_WITH_VERIFIED_SHA256",
+    "spm.model": "REPLACE_WITH_VERIFIED_SHA256"
+  }
+}
