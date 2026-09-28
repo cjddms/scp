@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -96,6 +96,11 @@
   th:hover .col-resizer::after, .col-resizer.dragging::after { border-color: var(--cyan); }
   .id { color: var(--cyan); }
   .dim { color: var(--dim); }
+  .comp { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; white-space:nowrap;
+    color: var(--c); border:1px solid color-mix(in srgb, var(--c) 45%, transparent);
+    background: color-mix(in srgb, var(--c) 12%, transparent); }
+  .obj { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;
+    max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block; vertical-align:bottom; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 10px; margin: 14px 0; }
   .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 5px; background: var(--panel); }
@@ -103,7 +108,7 @@
   .card strong { font-size: 20px; }
   .risk-hi { color: var(--deny); font-weight: 500; }
   .risk-md { color: var(--amber); }
-  .stamp { display: inline-block; font: 500 11px/1 var(--mono); letter-spacing: .1em;
+  .stamp { display: inline-block; white-space: nowrap; font: 500 11px/1 var(--mono); letter-spacing: .1em;
     padding: 4px 7px; border-radius: 3px; border: 1px solid; }
   .stamp.allow { color: var(--allow); border-color: color-mix(in srgb, var(--allow) 40%, transparent);
     background: color-mix(in srgb, var(--allow) 12%, transparent); }
@@ -132,6 +137,42 @@
     padding: 14px; font: 400 12px/1.5 var(--mono); color: var(--ink); white-space: pre-wrap;
     overflow-x: auto; min-height: 20px; }
 
+  /* ---- explorer ---- */
+  .steps { display: grid; gap: 10px; margin: 0 0 16px; }
+  .step { display: grid; grid-template-columns: 26px 1fr; gap: 12px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .step-n { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); display: grid;
+    place-items: center; font: 600 12px/1 var(--disp); color: var(--dim); }
+  .step.set .step-n { background: var(--cyan); border-color: var(--cyan); color: var(--bg); }
+  .step-t { font: 600 12px/1 var(--disp); letter-spacing: .06em; margin: 5px 0 10px; }
+  .step-t span { color: var(--dim); font-weight: 400; margin-left: 6px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { background: var(--panel-2); border: 1px solid var(--line); color: var(--dim);
+    font: 500 12px/1 var(--mono); padding: 7px 11px; border-radius: 999px; cursor: pointer; }
+  .pill:hover { color: var(--ink); border-color: var(--cyan); }
+  .pill.on { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
+  .pill:disabled { opacity: .35; cursor: not-allowed; }
+  .rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+  .rule { text-align: left; background: var(--panel-2); border: 1px solid var(--line);
+    border-left: 3px solid var(--sev); border-radius: 6px; padding: 10px 12px; color: var(--ink);
+    cursor: pointer; display: grid; gap: 4px; font: inherit; align-content: start; }
+  .rule:hover { border-color: var(--cyan); border-left-color: var(--sev); }
+  .rule.on { border-color: var(--cyan); border-left-color: var(--sev); box-shadow: 0 0 0 1px var(--cyan) inset; }
+  .rule .top { display: flex; justify-content: space-between; gap: 8px; font: 600 12px/1.3 var(--disp); }
+  .rule .n { font-variant-numeric: tabular-nums; color: var(--cyan); }
+  .rule .n.zero { color: var(--dim); }
+  .rule .k { font: 500 10.5px/1.3 var(--mono); color: var(--dim); overflow-wrap: anywhere; }
+  .rule p { margin: 0; color: var(--dim); font-size: 11.5px; }
+  .tag { display: inline-block; font: 500 10px/1 var(--mono); padding: 2px 5px; border-radius: 3px;
+    border: 1px solid var(--line); color: var(--dim); margin: 2px 4px 0 0; }
+  .crumb { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 0 0 12px; font-size: 12px; }
+  .crumb b { color: var(--cyan); font-weight: 500; }
+  .crumb .sep { color: var(--dim); }
+  .crumb .count { margin-left: auto; color: var(--dim); }
+  .chip { display: inline-block; font: 500 10.5px/1.4 var(--mono); padding: 1px 6px; border-radius: 3px;
+    margin: 1px 3px 1px 0; color: var(--sev); border: 1px solid color-mix(in srgb, var(--sev) 45%, transparent);
+    background: color-mix(in srgb, var(--sev) 10%, transparent); }
+
   @media (max-width: 720px) {
     .wall { grid-template-columns: 1fr; } .tiles { grid-template-columns: repeat(2, 1fr); }
     nav { width: 100%; margin: 6px 0 0; } .bar { height: auto; padding: 10px 16px; flex-wrap: wrap; }
@@ -147,9 +188,17 @@
 </div>
 
 <main>
-  <section id="traffic" class="on">
+  <section id="explore" class="on">
+    <h1 class="head">Explorer</h1>
+    <p class="sub">Transport → Component → Direction → Method → Detection 순서로 고르세요. 단계를 고를수록 아래 트래픽이 좁혀지고, 그 경로에 적용되는 탐지 룰이 정리됩니다.</p>
+    <div class="steps" id="x-steps"></div>
+    <div class="crumb" id="x-crumb"></div>
+    <div class="wrap"><table id="explore-t"></table></div>
+  </section>
+
+  <section id="traffic">
     <h1 class="head">Traffic</h1>
-    <p class="sub">Every request that reached the gate, newest first. Override a verdict and it becomes a policy for the next identical request.</p>
+    <p class="sub">게이트에 도착한 모든 요청을 최신순으로 보여줍니다. 판정을 직접 바꾸면 이후 같은 요청에 적용되는 정책으로 저장됩니다.</p>
 
     <div class="wall">
       <figure class="gauge">
@@ -164,11 +213,11 @@
         <div class="tiles">
           <div class="tile allow"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M6 10l3 3 5-6"/></svg>cleared</div><div class="n" id="k-allow">&mdash;</div></div>
           <div class="tile deny"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M7 7l6 6M13 7l-6 6"/></svg>refused</div><div class="n" id="k-deny">&mdash;</div></div>
-          <div class="tile events"><div class="row1"><svg viewBox="0 0 20 20"><path d="M5 3v14"/><path d="M5 4h9l-2 3 2 3H5"/></svg>open events</div><div class="n" id="k-events">&mdash;</div></div>
+          <div class="tile events"><div class="row1"><svg viewBox="0 0 20 20"><path d="M5 3v14"/><path d="M5 4h9l-2 3 2 3H5"/></svg>미처리 이벤트</div><div class="n" id="k-events">&mdash;</div></div>
           <div class="tile"><div class="row1"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/></svg>agents</div><div class="n" id="k-agents">&mdash;</div></div>
         </div>
         <div class="strip-wrap">
-          <div class="cap">last 50 verdicts &mdash; newest on the right</div>
+          <div class="cap">최근 판정 50건 &mdash; 오른쪽이 최신</div>
           <div class="strip" id="strip"></div>
         </div>
       </div>
@@ -176,16 +225,16 @@
 
     <div class="tools">
       <button class="ghost" onclick="loadTraffic();loadWall()">Refresh</button>
-      <button id="delete-selected-logs" class="link-danger" onclick="deleteSelected('logs')" disabled>Delete selected</button>
+      <button id="delete-selected-logs" class="link-danger" onclick="deleteSelected('logs')" disabled>선택 삭제</button>
       <span id="selected-count-logs" class="dim"></span>
-      <button class="link-danger" onclick="delAll('logs')">Clear the log</button>
+      <button class="link-danger" onclick="delAll('logs')">로그 전체 삭제</button>
     </div>
     <div class="wrap"><table id="traffic-t"></table></div>
   </section>
 
   <section id="responses">
     <h1 class="head">Responses</h1>
-    <p class="sub">Upstream responses are default-allow. Explicit response policy matches are observed in MONITOR mode and blocked in ENFORCE mode.</p>
+    <p class="sub">서버 응답은 기본 허용입니다. 응답 정책에 매칭되면 MONITOR 모드에서는 기록만 하고, ENFORCE 모드에서는 차단합니다.</p>
     <div class="cards" id="ml-status"></div>
     <div class="tools">
       <label class="fld" for="response-mode">Enforcement</label>
@@ -194,71 +243,74 @@
     </div>
     <div class="wrap"><table id="responses-t"></table></div>
 
-    <h2 class="head" style="margin-top:24px">Response policies</h2>
-    <p class="sub">Match the authenticated requester, observed upstream destination and a response finding. More specific rules win before priority; DENY wins only an exact tie.</p>
+    <h2 class="head" style="margin-top:24px">Response 정책</h2>
+    <p class="sub">인증된 요청자, 실제 목적지, 응답 탐지 항목으로 매칭합니다. 조건이 구체적인 정책이 우선 순위보다 먼저 적용되고, 완전히 동률일 때만 DENY가 이깁니다.</p>
     <form onsubmit="createResponsePolicy(event)">
       <input name="name" placeholder="name" required>
       <input name="agent_id" placeholder="agent id" value="*">
-      <input name="target" placeholder="target host:port" value="*">
-      <input name="tool" placeholder="tool" value="*">
+      <input name="target" placeholder="host:port 또는 stdio:이름" value="*">
+      <input name="tool" placeholder="도구 이름 또는 MCP 메서드" value="*">
       <select name="finding">
         <option>*</option><option>RESPONSE_SENSITIVE_DATA</option><option>JSONRPC_ID_MISMATCH</option>
         <option>INVALID_JSON_RESPONSE</option><option>UNEXPECTED_CONTENT_TYPE</option>
         <option>RESPONSE_STREAMING_SKIPPED</option><option>RESPONSE_TOO_LARGE_SKIPPED</option>
+        <option>TOOL_DEFINITION_CHANGED</option><option>RESOURCE_DEFINITION_CHANGED</option>
+        <option>PROMPT_DEFINITION_CHANGED</option><option>PROMPT_CONTENT_CHANGED</option>
+        <option>OUTPUT_SCHEMA_VIOLATION</option><option>RESOURCE_BLOB_UNINSPECTED</option>
       </select>
       <select name="action"><option>DENY</option><option>ALLOW</option></select>
       <input name="priority" type="number" value="100" style="width:78px" aria-label="priority">
-      <button class="primary">Add response policy</button>
+      <button class="primary">응답 정책 추가</button>
     </form>
     <div class="tools">
-      <button id="delete-selected-response-policies" class="link-danger" onclick="deleteSelected('response-policies')" disabled>Delete selected</button>
+      <button id="delete-selected-response-policies" class="link-danger" onclick="deleteSelected('response-policies')" disabled>선택 삭제</button>
       <span id="selected-count-response-policies" class="dim"></span>
-      <button class="link-danger" onclick="delAll('response-policies')">Remove every response policy</button>
+      <button class="link-danger" onclick="delAll('response-policies')">응답 정책 전체 삭제</button>
     </div>
     <div class="wrap"><table id="response-policies-t"></table></div>
   </section>
 
   <section id="agents">
     <h1 class="head">Agents</h1>
-    <p class="sub">Which AI agents may use the gateway at all. An unregistered ID never gets past the gate.</p>
+    <p class="sub">게이트웨이를 사용할 수 있는 AI 에이전트 목록입니다. 등록되지 않은 ID는 게이트를 통과할 수 없습니다.</p>
     <form onsubmit="createAgent(event)">
       <input name="agent_id" placeholder="agent id" required>
       <input name="agent_name" placeholder="name" required>
       <input name="token" placeholder="token" required>
-      <input name="source_ip" placeholder="source IPv4, e.g. 192.168.56.102" required>
-      <button class="primary">Register agent</button>
+      <input name="source_ip" placeholder="출발지 IPv4 (예: 192.168.56.102)" required>
+      <button class="primary">에이전트 등록</button>
     </form>
     <div class="tools">
-      <button id="delete-selected-agents" class="link-danger" onclick="deleteSelected('agents')" disabled>Delete selected</button>
+      <button id="delete-selected-agents" class="link-danger" onclick="deleteSelected('agents')" disabled>선택 삭제</button>
       <span id="selected-count-agents" class="dim"></span>
-      <button class="link-danger" onclick="delAll('agents')">Remove every agent</button>
+      <button class="link-danger" onclick="delAll('agents')">에이전트 전체 삭제</button>
     </div>
     <div class="wrap"><table id="agents-t"></table></div>
   </section>
 
   <section id="policies">
     <h1 class="head">Policies</h1>
-    <p class="sub">Checked against every request. An explicit refuse always wins over an allow; after that the most specific match, then the lowest priority number.</p>
+    <p class="sub">모든 요청에 적용됩니다. 명시적 DENY가 항상 ALLOW보다 우선하고, 그다음은 가장 구체적인 정책, 마지막으로 priority 숫자가 작은 정책 순입니다.</p>
     <form onsubmit="createPolicy(event)">
       <input name="name" placeholder="name" required>
       <input name="agent_id" placeholder="agent id" value="*">
-      <input name="target" placeholder="target host:port" value="*">
-      <input name="tool" placeholder="tool" value="*">
+      <input name="target" placeholder="host:port 또는 stdio:이름" value="*">
+      <input name="tool" placeholder="도구 이름 또는 MCP 메서드" value="*">
       <select name="action"><option>ALLOW</option><option>DENY</option></select>
       <input name="priority" type="number" value="100" style="width:78px" aria-label="priority">
-      <button class="primary">Add policy</button>
+      <button class="primary">정책 추가</button>
     </form>
     <div class="tools">
-      <button id="delete-selected-policies" class="link-danger" onclick="deleteSelected('policies')" disabled>Delete selected</button>
+      <button id="delete-selected-policies" class="link-danger" onclick="deleteSelected('policies')" disabled>선택 삭제</button>
       <span id="selected-count-policies" class="dim"></span>
-      <button class="link-danger" onclick="delAll('policies')">Remove every policy</button>
+      <button class="link-danger" onclick="delAll('policies')">정책 전체 삭제</button>
     </div>
     <div class="wrap"><table id="policies-t"></table></div>
   </section>
 
   <section id="events">
     <h1 class="head">Events</h1>
-    <p class="sub">What the inspectors flagged: poisoned tool descriptions, permission abuse, sensitive data in a payload, a tool definition that changed under a known name.</p>
+    <p class="sub">검사기가 잡아낸 항목입니다: 권한 남용, 요청·응답 속 민감정보, 같은 이름으로 바뀐 Tool / Resource / Prompt 정의, 스키마 위반 등.</p>
     <div class="tools"><button class="ghost" onclick="loadEvents()">Refresh</button></div>
     <div class="wrap"><table id="events-t"></table></div>
   </section>
@@ -268,6 +320,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const TABS = {
+  explore:  {label:"Explorer", icon:'<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5l5 5"/>',          load:loadExplore},
   traffic:  {label:"Feed",     icon:'<path d="M2 10h4l2-5 3 10 2-6 1 1h4"/>',                          load:()=>{loadTraffic();loadWall();}},
   responses:{label:"Responses",icon:'<path d="M4 4h12v9H8l-4 4z"/><path d="M7 8h6M7 11h4"/>',          load:loadResponses},
   agents:   {label:"Agents",   icon:'<rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/>', load:loadAgents},
@@ -297,14 +350,14 @@ async function api(path, opts) {
   return r.status === 204 ? null : r.json();
 }
 const formObj = f => Object.fromEntries(new FormData(f).entries());
-const esc = s => String(s ?? "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const esc = s => String(s ?? "").replace(/[<>&"']/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = s => String(s ?? "").replace("T", " ").slice(0, 19);
 const riskCls = n => n >= 60 ? "risk-hi" : n >= 30 ? "risk-md" : "";
 const selectAllHeader = kind => `<input type="checkbox" id="select-all-${kind}" aria-label="Select all ${kind}" onchange="toggleAll('${kind}', this.checked)">`;
 function tbl(el, cols, rows, rowFn) {
   el.innerHTML = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>" +
     (rows.length ? rows.map(rowFn).join("")
-                 : `<tr><td class="dim" colspan="${cols.length}">Nothing here yet.</td></tr>`) + "</tbody>";
+                 : `<tr><td class="dim" colspan="${cols.length}">아직 데이터가 없습니다.</td></tr>`) + "</tbody>";
   enableColumnResize(el);
 }
 function enableColumnResize(table) {
@@ -324,7 +377,7 @@ function enableColumnResize(table) {
     if (saved[index]) applyWidth(index, saved[index]);
     const handle = document.createElement("span");
     handle.className = "col-resizer";
-    handle.title = "Drag to resize; double-click to reset";
+    handle.title = "드래그로 너비 조절, 더블클릭으로 초기화";
     handle.addEventListener("dblclick", e => {
       e.preventDefault(); e.stopPropagation();
       delete saved[index]; applyWidth(index, 0);
@@ -348,6 +401,109 @@ function enableColumnResize(table) {
   });
 }
 
+const COMP = {tool:"#3b82f6", resource:"#10b981", prompt:"#a855f7", lifecycle:"#94a3b8", other:"#94a3b8"};
+function compBadge(c) {
+  return c ? `<span class="comp" style="--c:${COMP[c] || COMP.other}">${esc(c)}</span>` : '<span class="dim">—</span>';
+}
+
+// ---- explorer ----
+const X = {transport:"", component:"", direction:"", method:"", rule:""};
+try { Object.assign(X, JSON.parse(localStorage.getItem("explorer") || "{}")); } catch {}
+let CATALOG = null;
+const SEV = {high:"var(--deny)", medium:"var(--amber)", low:"var(--dim)"};
+const KIND = {request:"Request →", response:"← Response", inbound:"← Notification"};
+
+function xDirs() {
+  if (X.direction) return [X.direction];
+  return X.transport === "http" ? ["request","response"] : ["request","response","inbound"];
+}
+function xMethods() {
+  const comps = X.component ? [X.component] : Object.keys(CATALOG.components);
+  const out = [];
+  xDirs().forEach(d => comps.forEach(c => (CATALOG.methods[d][c] || []).forEach(m => { if (!out.includes(m)) out.push(m); })));
+  return out;
+}
+function xRules() {
+  const methods = X.method ? [X.method] : xMethods(), out = [];
+  const add = k => {
+    const r = CATALOG.rules[k];
+    if (!r || out.includes(k) || (X.transport && r.transports && !r.transports.includes(X.transport))) return;
+    out.push(k);
+  };
+  xDirs().forEach(d => {
+    const map = CATALOG.rule_map[d] || {};
+    (map["*"] || []).forEach(add);
+    methods.forEach(m => (map[m] || []).forEach(add));
+  });
+  return out;
+}
+function xSet(key, value) {
+  X[key] = value;
+  if (X.transport === "http" && X.direction === "inbound") X.direction = "";
+  if (X.method && !xMethods().includes(X.method)) X.method = "";
+  if (X.rule && !xRules().includes(X.rule)) X.rule = "";
+  try { localStorage.setItem("explorer", JSON.stringify(X)); } catch {}
+  loadExplore();
+}
+function xPills(key, options) {
+  return `<div class="pills">` + [["", "All"], ...options].map(([v, label, disabled, title]) =>
+    `<button class="pill${X[key] === v ? " on" : ""}" data-k="${key}" data-v="${esc(v)}"${disabled ? " disabled" : ""}${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`
+  ).join("") + `</div>`;
+}
+function xStep(n, key, title, hint, body) {
+  return `<div class="step${X[key] ? " set" : ""}"><div class="step-n">${n}</div><div>
+    <div class="step-t">${title}<span>${hint}</span></div>${body}</div></div>`;
+}
+function xRuleCard(k, count) {
+  const r = CATALOG.rules[k];
+  return `<button class="rule${X.rule === k ? " on" : ""}" style="--sev:${SEV[r.severity] || SEV.low}" data-k="rule" data-v="${esc(k)}">
+    <div class="top"><span>${esc(r.label)}</span><span class="n${count ? "" : " zero"}">${count}</span></div>
+    <div class="k">${esc(k)}</div><p>${esc(r.description)}</p>
+    <div>${r.ml ? '<span class="tag">ML 필요</span>' : ''}${r.transports ? `<span class="tag">${esc(r.transports.join("/").toUpperCase())} 전용</span>` : ''}<span class="tag">${esc(r.severity)}</span></div>
+  </button>`;
+}
+async function loadExplore() {
+  try { if (!CATALOG) CATALOG = await api("/rules"); } catch (x) { $("#x-steps").textContent = x.message; return; }
+  if (X.method && !xMethods().includes(X.method)) X.method = "";
+  if (X.rule && !xRules().includes(X.rule)) X.rule = "";
+  const data = await api("/explore?" + new URLSearchParams({...X, limit: 300}));
+  const rules = xRules();
+  $("#x-steps").innerHTML =
+    xStep(1, "transport", "Transport", "프로토콜", xPills("transport", Object.entries(CATALOG.transports))) +
+    xStep(2, "component", "Component", "MCP 구성요소", xPills("component", Object.entries(CATALOG.components))) +
+    xStep(3, "direction", "Direction", "요청 / 응답", xPills("direction", Object.entries(CATALOG.directions).map(([v, l]) =>
+      [v, l, v === "inbound" && X.transport === "http", v === "inbound" ? "서버가 먼저 보내는 메시지는 STDIO 프록시에서만 볼 수 있습니다" : ""]))) +
+    xStep(4, "method", "Method", "MCP 메서드", xPills("method", xMethods().map(m => [m, m]))) +
+    xStep(5, "rule", "Detection", "탐지 룰", `<div class="rules">
+      <button class="rule${X.rule ? "" : " on"}" style="--sev:var(--cyan)" data-k="rule" data-v="">
+        <div class="top"><span>이 경로의 전체 트래픽</span><span class="n">${data.total}</span></div>
+        <div class="k">적용되는 룰 ${rules.length}개</div><p>탐지 여부와 관계없이 이 경로의 모든 기록</p></button>
+      ${rules.map(k => xRuleCard(k, data.counts[k] || 0)).join("")}</div>`);
+  const path = [
+    X.transport && CATALOG.transports[X.transport], X.component && CATALOG.components[X.component],
+    X.direction && CATALOG.directions[X.direction], X.method, X.rule && CATALOG.rules[X.rule].label,
+  ].filter(Boolean);
+  $("#x-crumb").innerHTML = (path.length ? path.map(p => `<b>${esc(p)}</b>`).join('<span class="sep">›</span>') : '<span class="dim">전체</span>') +
+    `<span class="count">${data.matched}건 일치${data.matched > data.rows.length ? ` (최신 ${data.rows.length}건 표시)` : ""} · 경로 전체 ${data.total}건</span>
+     <button class="ghost" onclick="loadExplore()">Refresh</button>
+     <button class="ghost" onclick="Object.keys(X).forEach(k => X[k] = ''); xSet('rule', '')">Reset</button>`;
+  tbl($("#explore-t"), ["Time","Kind","Transport","Agent","Component","Method","Object","Destination","Verdict","Risk","Detections","Reason"], data.rows, r => `<tr>
+    <td class="dim">${esc(fmt(r.timestamp))}</td>
+    <td>${esc(KIND[r.kind] || r.kind)} <span class="dim">#${r.id}${r.request_log_id ? ` ← req ${r.request_log_id}` : ""}</span></td>
+    <td>${esc(r.transport)}</td><td class="id">${esc(r.agent_id) || '—'}</td>
+    <td>${compBadge(r.component)}</td><td>${esc(r.method) || '—'}</td>
+    <td><span class="obj" title="${esc(r.object_name)}">${esc(r.object_name) || '—'}</span></td>
+    <td>${esc(r.destination) || '—'}</td>
+    <td><span class="stamp ${r.verdict === 'DENY' ? 'deny' : 'allow'}">${esc(r.verdict || '—')}</span></td>
+    <td class="num ${riskCls(r.risk_score)}">${r.risk_score ?? '—'}</td>
+    <td>${r.findings.length ? r.findings.map(f => `<span class="chip" style="--sev:${SEV[(CATALOG.rules[f] || {}).severity] || SEV.low}" title="${esc((CATALOG.rules[f] || {}).description)}">${esc(f)}</span>`).join("") : '<span class="dim">none</span>'}</td>
+    <td class="dim">${esc(r.reason)}</td></tr>`);
+}
+document.addEventListener("click", e => {
+  const el = e.target.closest("#x-steps [data-k]");
+  if (el && !el.disabled) xSet(el.dataset.k, el.dataset.v);
+});
+
 // ---- command wall ----
 const RING = 326.7;
 async function loadWall() {
@@ -368,7 +524,7 @@ async function loadWall() {
   strip.className = "strip" + (recent.length ? "" : " empty");
   strip.innerHTML = recent.length
     ? recent.map(l => `<i class="${l.decision === "DENY" ? "d" : ""}" title="${esc(l.decision)} ${esc(fmt(l.timestamp))}"></i>`).join("")
-    : "No requests logged yet.";
+    : "아직 기록된 요청이 없습니다.";
 }
 
 // ---- agents ----
@@ -378,35 +534,35 @@ async function loadAgents() {
     <td><input type="checkbox" class="row-select select-agents" data-id="${encodeURIComponent(a.agent_id)}" aria-label="Select agent ${esc(a.agent_id)}" onchange="syncSelection('agents')"></td>
     <td class="id">${esc(a.agent_id)}</td><td>${esc(a.agent_name)}</td>
     <td class="${a.status === 'active' ? 'id' : 'risk-hi'}">${esc(a.status)}</td>
-    <td class="dim">${esc(a.source_ip) || "not configured"}</td>
+    <td class="dim">${esc(a.source_ip) || "미설정"}</td>
     <td class="${a.has_token ? '' : 'risk-hi'}">${a.has_token ? "set" : "none"}</td>
     <td class="dim">${esc(fmt(a.created_at))}</td>
     <td class="actions">
-      <button class="cell-btn" onclick="resetToken('${a.agent_id}')">Reset token</button>
-      <button class="cell-btn" onclick="setSourceIp('${a.agent_id}','${a.source_ip || ""}')">Set IP</button>
+      <button class="cell-btn" onclick="resetToken('${a.agent_id}')">토큰 재설정</button>
+      <button class="cell-btn" onclick="setSourceIp('${a.agent_id}','${a.source_ip || ""}')">IP 설정</button>
       <button class="cell-btn" onclick="toggleAgent('${a.agent_id}','${a.status}')">${a.status === 'active' ? 'Disable' : 'Enable'}</button>
     </td>
     <td><button class="cell-btn d" onclick="delAgent('${a.agent_id}')">Delete</button></td></tr>`);
   syncSelection("agents");
 }
 async function resetToken(id) {
-  const t = prompt("New token for " + id + ":");
+  const t = prompt(id + "의 새 토큰:");
   if (!t) return;
-  try { await api(`/agents/${id}?token=${encodeURIComponent(t)}`, {method:"PUT"}); alert("Token updated for " + id + "."); loadAgents(); }
+  try { await api(`/agents/${id}?token=${encodeURIComponent(t)}`, {method:"PUT"}); alert(id + "의 토큰을 변경했습니다."); loadAgents(); }
   catch (x) { alert(x.message); }
 }
 async function setSourceIp(id, current) {
-  const ip = prompt("Source IPv4 for " + id + ":", current || "192.168.56.102");
+  const ip = prompt(id + "의 출발지 IPv4:", current || "192.168.56.102");
   if (ip === null) return;
-  if (!ip.trim()) { alert("Source IPv4 is required."); return; }
+  if (!ip.trim()) { alert("출발지 IPv4를 입력해야 합니다."); return; }
   try {
     await api(`/agents/${id}?source_ip=${encodeURIComponent(ip.trim())}`, {method:"PUT"});
-    alert("Source IP updated for " + id + ".");
+    alert(id + "의 출발지 IP를 변경했습니다.");
     loadAgents();
   } catch (x) { alert(x.message); loadAgents(); }
 }
 async function delAll(kind) {
-  if (!confirm(`Delete every ${kind === 'logs' ? 'log row' : kind.replace(/s$/, '')}? This cannot be undone.`)) return;
+  if (!confirm(`${({logs:"로그", agents:"에이전트", policies:"정책", "response-policies":"응답 정책"})[kind] || kind}을(를) 전부 삭제할까요? 되돌릴 수 없습니다.`)) return;
   await api("/" + kind, {method:"DELETE"});
   ({agents:loadAgents, policies:loadPolicies, "response-policies":loadResponses,
     logs:()=>{loadTraffic();loadWall();loadResponses();}}[kind])();
@@ -420,7 +576,7 @@ async function toggleAgent(id, status) {
   await api(`/agents/${id}?status=${status === 'active' ? 'disabled' : 'active'}`, {method:"PUT"});
   loadAgents();
 }
-async function delAgent(id) { if (confirm("Delete " + id + "?")) { await api(`/agents/${id}`, {method:"DELETE"}); loadAgents(); } }
+async function delAgent(id) { if (confirm(id + "을(를) 삭제할까요?")) { await api(`/agents/${id}`, {method:"DELETE"}); loadAgents(); } }
 
 // ---- policies ----
 async function loadPolicies() {
@@ -447,17 +603,21 @@ async function togglePolicy(p) {
   await api(`/policies/${p.policy_id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   loadPolicies();
 }
-async function delPolicy(id) { if (confirm("Delete policy " + id + "?")) { await api(`/policies/${id}`, {method:"DELETE"}); loadPolicies(); } }
+async function delPolicy(id) { if (confirm("정책 " + id + "을(를) 삭제할까요?")) { await api(`/policies/${id}`, {method:"DELETE"}); loadPolicies(); } }
 
 // ---- traffic ----
 async function loadTraffic() {
   const rows = await api("/logs?limit=200");
-  tbl($("#traffic-t"), [selectAllHeader("logs"),"Verdict","Time","Agent","Protocol","Destination","Tool","Risk","Policy","Reason",""], rows, l => `<tr>
+  tbl($("#traffic-t"), [selectAllHeader("logs"),"Verdict","Time","Agent","Transport","Destination","Component","Method","Object","Risk","Policy","Reason",""], rows, l => `<tr>
     <td><input type="checkbox" class="row-select select-logs" data-id="${l.log_id}" aria-label="Select log ${l.log_id}" onchange="syncSelection('logs')"></td>
     <td><span class="stamp ${l.decision === 'DENY' ? 'deny' : 'allow'}">${esc(l.decision || '—')}</span></td>
     <td class="dim">${esc(fmt(l.timestamp))}</td>
-    <td class="id">${esc(l.agent_id) || '—'}</td><td>${esc(l.protocol) || '—'}</td>
-    <td>${esc(l.destination) || '—'}</td><td>${esc(l.tool) || '—'}</td>
+    <td class="id">${esc(l.agent_id) || '—'}</td>
+    <td>${esc(l.protocol) || '—'} <span class="dim">${esc(l.transport || 'http')}${l.direction === 'inbound' ? ' ← in' : ' → out'}</span></td>
+    <td>${esc(l.destination) || '—'}</td>
+    <td>${compBadge(l.component)}</td>
+    <td>${esc(l.mcp_method) || '—'}</td>
+    <td class="obj" title="${esc(l.object_name || l.tool)}">${esc(l.object_name || l.tool) || '—'}</td>
     <td class="num ${riskCls(l.risk_score)}">${l.risk_score ?? '—'}</td>
     <td class="num dim">${l.policy_id ?? '—'}</td>
     <td class="dim">${esc(l.reason)}</td>
@@ -488,11 +648,11 @@ function syncSelection(kind) {
     all.indeterminate = selected > 0 && selected < boxes.length;
   }
   $(`#delete-selected-${kind}`).disabled = selected === 0;
-  $(`#selected-count-${kind}`).textContent = selected ? `${selected} selected` : "";
+  $(`#selected-count-${kind}`).textContent = selected ? `${selected}개 선택됨` : "";
 }
 async function deleteSelected(kind) {
   const ids = selectedIds(kind);
-  if (!ids.length || !confirm(`Delete ${ids.length} selected ${kind === "logs" ? "log row(s)" : kind}? This cannot be undone.`)) return;
+  if (!ids.length || !confirm(`선택한 ${ids.length}개 ${({logs:"로그", agents:"에이전트", policies:"정책", "response-policies":"응답 정책"})[kind] || kind}을(를) 삭제할까요? 되돌릴 수 없습니다.`)) return;
   const key = {agents:"agent_ids", policies:"policy_ids", "response-policies":"response_policy_ids", logs:"log_ids"}[kind];
   try {
     await api(`/${kind}/bulk-delete`, {
@@ -509,9 +669,9 @@ async function deleteSelected(kind) {
     if (kind === "logs") { await loadTraffic(); await loadWall(); await loadResponses(); }
   }
 }
-async function delLog(id) { if (confirm("Delete log " + id + "?")) { await api(`/logs/${id}`, {method:"DELETE"}); loadTraffic(); loadWall(); loadResponses(); } }
+async function delLog(id) { if (confirm("로그 " + id + "을(를) 삭제할까요?")) { await api(`/logs/${id}`, {method:"DELETE"}); loadTraffic(); loadWall(); loadResponses(); } }
 async function decide(id, decision) {
-  const reason = prompt(`${decision === 'ALLOW' ? 'Allow' : 'Block'} request ${id}. Reason (saved as a policy):`, "operator override");
+  const reason = prompt(`요청 ${id}을(를) ${decision === 'ALLOW' ? '허용' : '차단'}합니다. 사유 (정책으로 저장됨):`, "운영자 판단");
   if (reason === null) return;
   await api(`/decisions/${id}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({decision, reason})});
   loadTraffic(); loadWall();
@@ -525,16 +685,17 @@ async function loadResponses() {
   ]);
   const findingTotal = Object.values(ml.findings || {}).reduce((a,b) => a + b, 0);
   $("#ml-status").innerHTML = `
-    <div class="card"><span>ML classifier</span><strong class="${ml.loaded ? 'ok' : 'risk-hi'}">${ml.loaded ? 'loaded' : 'unavailable'}</strong><small>${esc(ml.model_id)} @ ${esc(ml.model_revision)}</small></div>
-    <div class="card"><span>ML findings</span><strong>${findingTotal}</strong><small>${Object.entries(ml.findings || {}).map(([k,v]) => `${esc(k)}: ${v}`).join(' · ') || 'none'}</small></div>
-    <div class="card"><span>Inference latency</span><strong>${ml.latency_ms.p95} ms</strong><small>p50 ${ml.latency_ms.p50} · p95 ${ml.latency_ms.p95} · p99 ${ml.latency_ms.p99}</small></div>
-    <div class="card"><span>Last load error</span><strong>${ml.load_error ? 'attention' : 'none'}</strong><small>${esc(ml.load_error || 'local artifacts verified')}</small></div>`;
+    <div class="card"><span>ML 분류기</span><strong class="${ml.loaded ? 'ok' : 'risk-hi'}">${ml.loaded ? '로드됨' : '사용 불가'}</strong><small>${esc(ml.model_id)} @ ${esc(ml.model_revision)}</small></div>
+    <div class="card"><span>ML 탐지</span><strong>${findingTotal}</strong><small>${Object.entries(ml.findings || {}).map(([k,v]) => `${esc(k)}: ${v}`).join(' · ') || 'none'}</small></div>
+    <div class="card"><span>추론 지연</span><strong>${ml.latency_ms.p95} ms</strong><small>p50 ${ml.latency_ms.p50} · p95 ${ml.latency_ms.p95} · p99 ${ml.latency_ms.p99}</small></div>
+    <div class="card"><span>최근 로드 오류</span><strong>${ml.load_error ? '확인 필요' : 'none'}</strong><small>${esc(ml.load_error || '로컬 모델 파일 검증됨')}</small></div>`;
   $("#response-mode").value = setting.mode;
-  tbl($("#responses-t"), ["Response","Request","Time","Agent","Protocol","Destination","Method / Tool","HTTP","Type / Size","Inspected","Risk","Policy","Effective","Findings / Decision","Reason","Summary"], rows, r => `<tr>
+  tbl($("#responses-t"), ["Response","Request","Time","Agent","Protocol","Destination","Component","Method / Object","HTTP","Type / Size","Inspected","Risk","Policy","Effective","Findings / Decision","Reason","Summary"], rows, r => `<tr>
     <td class="dim">${r.response_id}</td><td class="dim">${r.request_log_id}</td>
     <td class="dim">${esc(fmt(r.timestamp))}</td><td class="id">${esc(r.agent_id) || '—'}</td>
-    <td>${esc(r.protocol) || '—'}</td><td>${esc(r.destination) || '—'}</td>
-    <td>${esc(r.request_method) || '—'}${r.tool ? ` / ${esc(r.tool)}` : ''}</td>
+    <td>${esc(r.protocol) || '—'} <span class="dim">${esc(r.transport || 'http')}</span></td><td>${esc(r.destination) || '—'}</td>
+    <td>${compBadge(r.component)}</td>
+    <td>${esc(r.request_method) || '—'}${(r.object_name || r.tool) ? ` / <span class="obj">${esc(r.object_name || r.tool)}</span>` : ''}</td>
     <td class="num ${r.status_code >= 500 ? 'risk-hi' : ''}">${r.status_code}</td>
     <td class="dim">${esc(r.content_type) || '—'} / ${r.body_size} B</td>
     <td>${r.inspected ? 'yes' : 'no'} <span class="dim">${esc(r.inspection_status)}</span></td>
@@ -547,7 +708,7 @@ async function loadResponses() {
   loadResponsePolicies(policies);
 }
 async function setResponseMode(mode) {
-  if (mode === "ENFORCE" && !confirm("Enable response enforcement? Matching DENY policies will replace upstream responses with HTTP 403.")) {
+  if (mode === "ENFORCE" && !confirm("응답 차단(ENFORCE)을 켤까요? DENY 응답 정책에 매칭되는 서버 응답이 HTTP 403(또는 JSON-RPC 오류)으로 바뀝니다.")) {
     $("#response-mode").value = "MONITOR"; return;
   }
   try {
@@ -581,12 +742,12 @@ async function toggleResponsePolicy(p) {
   loadResponses();
 }
 async function delResponsePolicy(id) {
-  if (confirm("Delete response policy " + id + "?")) {
+  if (confirm("응답 정책 " + id + "을(를) 삭제할까요?")) {
     await api(`/response-policies/${id}`, {method:"DELETE"}); loadResponses();
   }
 }
 async function responseDecision(id, finding, decision) {
-  const reason = prompt(`${decision === 'ALLOW' ? 'Allow' : 'Block'} ${finding} for response ${id}. Reason:`, "operator response decision");
+  const reason = prompt(`응답 ${id}의 ${finding}을(를) ${decision === 'ALLOW' ? '허용' : '차단'}합니다. 사유:`, "운영자 응답 판단");
   if (reason === null) return;
   await api(`/response-decisions/${id}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({decision, finding, reason})});
   loadResponses();
@@ -603,7 +764,7 @@ async function loadEvents() {
     <td class="dim">${esc(e.reason)}</td><td>${esc(e.status)}</td></tr>`);
 }
 
-show("traffic");
+show("explore");
 </script>
 </body>
 </html>
