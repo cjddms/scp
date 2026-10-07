@@ -43,7 +43,7 @@
   section.on { display: block; }
 
   .head { font: 600 18px/1.2 var(--disp); letter-spacing: .04em; margin: 0 0 4px; }
-  .sub { color: var(--dim); font-size: 12px; margin: 0 0 16px; max-width: 68ch; }
+  .sub { color: var(--dim); font-size: 12px; line-height: 1.6; margin: 0 0 16px; word-break: keep-all; }
   .tools { display: flex; gap: 8px; align-items: center; margin: 0 0 14px; flex-wrap: wrap; }
   .link-danger { background: none; border: 0; color: var(--deny); font: 400 11px/1 var(--mono);
     cursor: pointer; opacity: .8; }
@@ -121,6 +121,8 @@
   input, select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
     font: 400 12px/1 var(--mono); padding: 8px 10px; border-radius: 4px; }
   input::placeholder { color: var(--dim); }
+  input:focus::placeholder { color: transparent; }
+  form.policy-form input:not([type=number]) { min-width: 220px; }
   .primary { background: var(--cyan); border: 1px solid var(--cyan); color: var(--bg);
     font: 600 12px/1 var(--disp); letter-spacing: .05em; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
   .primary:hover { filter: brightness(1.1); }
@@ -190,7 +192,7 @@
 <main>
   <section id="explore" class="on">
     <h1 class="head">Explorer</h1>
-    <p class="sub">Transport → Component → Direction → Method → Detection 순서로 고르세요. 단계를 고를수록 아래 트래픽이 좁혀지고, 그 경로에 적용되는 탐지 룰이 정리됩니다.</p>
+    <p class="sub">Transport → Component → Direction → Method → Detection 순서로 고르세요.<br>단계를 고를수록 아래 트래픽이 좁혀지고, 그 경로에 적용되는 탐지 룰이 정리됩니다.</p>
     <div class="steps" id="x-steps"></div>
     <div class="crumb" id="x-crumb"></div>
     <div class="wrap"><table id="explore-t"></table></div>
@@ -198,7 +200,7 @@
 
   <section id="traffic">
     <h1 class="head">Traffic</h1>
-    <p class="sub">게이트에 도착한 모든 요청을 최신순으로 보여줍니다. 판정을 직접 바꾸면 이후 같은 요청에 적용되는 정책으로 저장됩니다.</p>
+    <p class="sub">게이트에 도착한 모든 요청을 최신순으로 보여줍니다.<br>판정을 직접 바꾸면 이후 같은 요청에 적용되는 정책으로 저장됩니다.</p>
 
     <div class="wall">
       <figure class="gauge">
@@ -234,7 +236,7 @@
 
   <section id="responses">
     <h1 class="head">Responses</h1>
-    <p class="sub">서버 응답은 기본 허용입니다. 응답 정책에 매칭되면 MONITOR 모드에서는 기록만 하고, ENFORCE 모드에서는 차단합니다.</p>
+    <p class="sub">서버 응답은 기본 허용입니다.<br>응답 정책에 매칭되면 MONITOR 모드에서는 기록만 하고, ENFORCE 모드에서는 차단합니다.</p>
     <div class="cards" id="ml-status"></div>
     <div class="tools">
       <label class="fld" for="response-mode">Enforcement</label>
@@ -244,12 +246,12 @@
     <div class="wrap"><table id="responses-t"></table></div>
 
     <h2 class="head" style="margin-top:24px">Response 정책</h2>
-    <p class="sub">인증된 요청자, 실제 목적지, 응답 탐지 항목으로 매칭합니다. 조건이 구체적인 정책이 우선 순위보다 먼저 적용되고, 완전히 동률일 때만 DENY가 이깁니다.</p>
-    <form onsubmit="createResponsePolicy(event)">
-      <input name="name" placeholder="name" required>
-      <input name="agent_id" placeholder="agent id" value="*">
-      <input name="target" placeholder="host:port 또는 stdio:이름" value="*">
-      <input name="tool" placeholder="도구 이름 또는 MCP 메서드" value="*">
+    <p class="sub">인증된 요청자, 실제 목적지, 응답 탐지 항목으로 매칭합니다.<br>조건이 구체적인 정책이 우선 순위보다 먼저 적용되고, 완전히 동률일 때만 DENY가 이깁니다.</p>
+    <form class="policy-form" onsubmit="createResponsePolicy(event)">
+      <input name="name" placeholder="정책 이름 (예: block-file-write)" required>
+      <input name="agent_id" list="wildcard-opts" autocomplete="off" placeholder="에이전트 ID (비우면 * = 전체)">
+      <input name="target" list="wildcard-opts" autocomplete="off" placeholder="대상 host:port 또는 stdio:이름 (비우면 *)">
+      <input name="tool" list="wildcard-opts" autocomplete="off" placeholder="도구 이름 또는 MCP 메서드 (비우면 *)">
       <select name="finding">
         <option>*</option><option>RESPONSE_SENSITIVE_DATA</option><option>JSONRPC_ID_MISMATCH</option>
         <option>INVALID_JSON_RESPONSE</option><option>UNEXPECTED_CONTENT_TYPE</option>
@@ -259,7 +261,7 @@
         <option>OUTPUT_SCHEMA_VIOLATION</option><option>RESOURCE_BLOB_UNINSPECTED</option>
       </select>
       <select name="action"><option>DENY</option><option>ALLOW</option></select>
-      <input name="priority" type="number" value="100" style="width:78px" aria-label="priority">
+      <input name="priority" type="number" value="100" style="width:78px" aria-label="priority" title="우선순위 (작을수록 먼저 적용)">
       <button class="primary">응답 정책 추가</button>
     </form>
     <div class="tools">
@@ -272,7 +274,7 @@
 
   <section id="agents">
     <h1 class="head">Agents</h1>
-    <p class="sub">게이트웨이를 사용할 수 있는 AI 에이전트 목록입니다. 등록되지 않은 ID는 게이트를 통과할 수 없습니다.</p>
+    <p class="sub">게이트웨이를 사용할 수 있는 AI 에이전트 목록입니다.<br>등록되지 않은 ID는 게이트를 통과할 수 없습니다.</p>
     <form onsubmit="createAgent(event)">
       <input name="agent_id" placeholder="agent id" required>
       <input name="agent_name" placeholder="name" required>
@@ -290,14 +292,14 @@
 
   <section id="policies">
     <h1 class="head">Policies</h1>
-    <p class="sub">모든 요청에 적용됩니다. 명시적 DENY가 항상 ALLOW보다 우선하고, 그다음은 가장 구체적인 정책, 마지막으로 priority 숫자가 작은 정책 순입니다.</p>
-    <form onsubmit="createPolicy(event)">
-      <input name="name" placeholder="name" required>
-      <input name="agent_id" placeholder="agent id" value="*">
-      <input name="target" placeholder="host:port 또는 stdio:이름" value="*">
-      <input name="tool" placeholder="도구 이름 또는 MCP 메서드" value="*">
+    <p class="sub">모든 요청에 적용됩니다.<br>명시적 DENY가 항상 ALLOW보다 우선하고, 그다음은 가장 구체적인 정책, 마지막으로 priority 숫자가 작은 정책 순입니다.</p>
+    <form class="policy-form" onsubmit="createPolicy(event)">
+      <input name="name" placeholder="정책 이름 (예: block-file-write)" required>
+      <input name="agent_id" list="wildcard-opts" autocomplete="off" placeholder="에이전트 ID (비우면 * = 전체)">
+      <input name="target" list="wildcard-opts" autocomplete="off" placeholder="대상 host:port 또는 stdio:이름 (비우면 *)">
+      <input name="tool" list="wildcard-opts" autocomplete="off" placeholder="도구 이름 또는 MCP 메서드 (비우면 *)">
       <select name="action"><option>ALLOW</option><option>DENY</option></select>
-      <input name="priority" type="number" value="100" style="width:78px" aria-label="priority">
+      <input name="priority" type="number" value="100" style="width:78px" aria-label="priority" title="우선순위 (작을수록 먼저 적용)">
       <button class="primary">정책 추가</button>
     </form>
     <div class="tools">
@@ -315,6 +317,7 @@
     <div class="wrap"><table id="events-t"></table></div>
   </section>
 
+  <datalist id="wildcard-opts"><option value="*">전체 (모든 값에 매칭)</option></datalist>
 </main>
 
 <script>
@@ -350,6 +353,10 @@ async function api(path, opts) {
   return r.status === 204 ? null : r.json();
 }
 const formObj = f => Object.fromEntries(new FormData(f).entries());
+// Policy match fields left blank mean "match everything".
+const policyObj = f => { const o = formObj(f);
+  for (const k of ["agent_id", "target", "tool"]) if (k in o) o[k] = o[k].trim() || "*";
+  o.priority = +o.priority; o.enabled = true; return o; };
 const esc = s => String(s ?? "").replace(/[<>&"']/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = s => String(s ?? "").replace("T", " ").slice(0, 19);
 const riskCls = n => n >= 60 ? "risk-hi" : n >= 30 ? "risk-md" : "";
@@ -593,7 +600,7 @@ async function loadPolicies() {
 }
 async function createPolicy(e) {
   e.preventDefault();
-  const o = formObj(e.target); o.priority = +o.priority; o.enabled = true;
+  const o = policyObj(e.target);
   try { await api("/policies", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(o)});
     e.target.reset(); loadPolicies(); } catch (x) { alert(x.message); }
 }
@@ -728,7 +735,7 @@ function loadResponsePolicies(rows) {
 }
 async function createResponsePolicy(e) {
   e.preventDefault();
-  const o = formObj(e.target); o.priority = +o.priority; o.enabled = true;
+  const o = policyObj(e.target);
   try {
     await api("/response-policies", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(o)});
     e.target.reset(); await loadResponses();
