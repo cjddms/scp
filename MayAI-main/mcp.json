@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "mayai-everything": {
+      "command": "python",
+      "args": [
+        "MayAI.py",
+        "stdio",
+        "--server-name",
+        "everything",
+        "--",
+        "npx.cmd",
+        "-y",
+        "@modelcontextprotocol/server-everything"
+      ],
+      "env": {
+        "MAYAI_AGENT_ID": "agent-stdio",
+        "MAYAI_AGENT_TOKEN": "s3cret"
+      }
+    }
+  }
+}
