@@ -1,0 +1,11 @@
+{
+  "model_id": "meta-llama/Llama-Prompt-Guard-2-86M",
+  "revision": "a8ded8e",
+  "sha256": {
+    "model.onnx": "REPLACE_WITH_VERIFIED_SHA256",
+    "config.json": "REPLACE_WITH_VERIFIED_SHA256",
+    "tokenizer.json": "REPLACE_WITH_VERIFIED_SHA256",
+    "tokenizer_config.json": "REPLACE_WITH_VERIFIED_SHA256",
+    "special_tokens_map.json": "REPLACE_WITH_VERIFIED_SHA256"
+  }
+}

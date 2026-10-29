@@ -1,0 +1,11 @@
+﻿{
+    "model_id":  "meta-llama/Llama-Prompt-Guard-2-86M",
+    "revision":  "a8ded8e",
+    "sha256":  {
+                   "config.json":  "e03d43fdf74920554e6de122bf6f2c6e35aa694d4211fdad45ef3596fc31803f",
+                   "model.onnx":  "f967ea56e180f88752f3e236baf8085c992ee0889036a328e59cd17b04f9ae9e",
+                   "special_tokens_map.json":  "b70b72bbc44ed96ae896e1b26d2d269d40a58709c9de1428c9bbfa872fe7f7ce",
+                   "tokenizer.json":  "870798f0e3bb05c636bf62be904b2d8f48ace4785e9c1d71a8a67bd0586c941d",
+                   "tokenizer_config.json":  "ed146c022d893c8e75382c2837fc259491546f748c040db283a4ae3f7d2f0c22"
+               }
+}

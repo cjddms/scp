@@ -1,0 +1,5 @@
+{
+  "env": {
+    "PATH": "C:\\Program Files\\nodejs;C:\\Users\\user\\AppData\\Roaming\\npm;${PATH}"
+  }
+}
