@@ -577,16 +577,19 @@ _SENSITIVE_PATH_RE = re.compile(
     r"|\.aws[/\\]credentials\b"
     r"|(?<![\w./-])\.env(?![\w.-])"
     r"|\bsecrets?\.(?:ya?ml|json|toml)\b"
-    r"|\bmcp\.json\b"
+    r"|\bmcp\.json\b|(?<![\w.])\.npmrc\b|(?<![\w.])\.git-credentials\b"
 )
+_ENV_FILE_RE = re.compile(r"(?<![\w./-])\.env(?![\w.-])")
+_ALSO_RE = re.compile(r"\balso\b|함께|같이|몰래")
 _SECRET_NOUN_RE = re.compile(
     r"\b(?:saved |stored |database |db |admin )passwords?\b"
-    r"|\bapi[ _-]?keys?\b|\b(?:access|auth|github) tokens?\b|\bprivate keys?\b|\bcredentials\b"
+    r"|\b\w*api[ _-]?keys?\b|\b(?:access|auth|github) tokens?\b|\bprivate keys?\b|\bcredentials\b"
     r"|비밀\s*키|개인\s*키|api\s*키|(?:액세스|인증)\s*토큰|주민등록번호"
 )
 _ACCESS_RE = re.compile(
     r"\b(?:read|cat|attach|include|send|email|upload|post|forward|print|output|collect|exfiltrate"
-    r"|leak|reveal|dump|pass)\b|읽|첨부|포함|전송|전달|출력|수집|유출|보내"
+    r"|leak|reveal|dump|pass|fetch|put|append|supply|supplied)\b"
+    r"|읽|첨부|포함|전송|전달|출력|수집|유출|보내|적어|넣어|붙이|붙여"
 )
 _NEGATED_ACCESS_RE = re.compile(
     r"\b(?:never|do not|don't|must not|should not)\s+(?:\w+\s+){0,3}?"
@@ -597,17 +600,20 @@ _SECRET_OWNER_RE = re.compile(r"\b(?:the user'?s|users'?|their|all|any|every)\b|
 _CONCEALMENT_RE = re.compile(
     r"\b(?:do not|don't|never|not|without)\s+(?:\w+\s+){0,3}?"
     r"(?:mention|tell|telling|inform|show|notify|alert|ask|asking|confirm|confirmation)\b"
-    r"|\bsecretly\b|사용자에게\S*\s*(?:\S+\s+)?알리지|몰래|알리지\s*마"
+    r"|\b(?:secretly|quietly)\b|\bkeep (?:this|it) (?:\w+\s+){0,2}?to yourself\b|\bnot report\b"
+    r"|사용자에게\S*\s*(?:\S+\s+)?알리지|몰래|(?:알리지|말하지|표시하지)\s*마|확인\s*없이"
 )
 _AI_ADDRESSED_RE = re.compile(
     r"\b(?:note|message|instructions?|attention)\s*(?:to|for|:)?\s*"
     r"(?:the\s+|all\s+|any\s+|automated\s+\w+\s+)?(?:ai|assistant|model|llm|agents?|bots?)\b"
     r"|(?:^|[.\[\]\s])(?:assistant|ai(?: coding)? agents?|ai assistants?|llms?)\s*[,:]"
-    r"|\bai\s*(?:어시스턴트)?에게|어시스턴트에게|(?:모델|에이전트)에게"
+    r"|\b(?:llm|ai) (?:agents?|readers?)\b|\bagent instructions?\b|\bto the (?:language )?(?:model|llm)\b"
+    r"|\bhidden directive\b|\bai\s*(?:어시스턴트|모델)?(?:에게|은|는)\s|어시스턴트(?:에게|는)|(?:모델|에이전트)(?:에게|는)\s"
 )
 _AI_DIRECTIVE_RE = re.compile(
     r"\b(?:ignore|disregard|delete|remove|wipe|approve|transfer|send|email|print|reveal|collect|rate|rank)\b"
-    r"|transfer_funds|bank account|new (?:primary )?task|hidden note|무시|삭제|전송|승인|송금|유출"
+    r"|transfer_funds|bank account|new (?:primary )?task|hidden note|scored? highest|always recommend"
+    r"|무시|삭제|전송|승인|송금|유출|업로드|토큰|비밀번호|잊고"
 )
 _DANGEROUS_COMMAND_RE = re.compile(
     r"\brm\s+-[a-z]*r[a-z]*f?\s+[/~]|\b(?:curl|wget)\b[^|\n]*\|\s*(?:ba|z)?sh\b"
@@ -621,6 +627,9 @@ _OVERRIDE_RE = re.compile(
     r"(?:이전|지금까지|앞선|기존)\S*\s*(?:모든\s*)?(?:지시|지침|명령|프롬프트)\S*\s*(?:모두\s*|전부\s*)?(?:무시|잊)"
     r"|</(?:instructions?|system)>\s*(?:<system>|new instructions)"
     r"|\byou are now in (?:developer|unrestricted|jailbreak) mode\b"
+    r"|\[system override\]|\bsafety checks? (?:are |is )?disabled\b"
+    r"|\b(?:instructions|rules|policy) (?:are|is) no longer (?:valid|in effect)\b"
+    r"|지침\S*\s*더 이상 유효|문서의 명령만 따르"
 )
 _PROMPT_LEAK_RE = re.compile(
     r"\b(?:reveal|print|show|output|repeat|leak|dump)\s+(?:me\s+)?(?:your\s+|the\s+|all\s+)?"
@@ -629,13 +638,22 @@ _PROMPT_LEAK_RE = re.compile(
 )
 _TOOL_SHADOWING_RE = re.compile(
     r"\bwhen this tool is available\b|\b\w+_\w+\s+tool\s+(?:must|should|always)\b|\balways bcc\b"
+    r"|\b(?:whenever|when|if)\s+\w+_\w+\s+is (?:used|called)\b[^.\n]*\b(?:change|replace|redirect|add)\b"
 )
-_PHISHING_RE = re.compile(r"\bonly trusted (?:web)?site\b")
+_PHISHING_RE = re.compile(
+    r"\bonly trusted (?:web)?site\b|\btell the user\b[^\n]*\b(?:re-?enter|enter|log ?in|sign ?in)\b"
+)
+_FAKE_APPROVAL_RE = re.compile(
+    r"\bpre-?authori[sz]ed\b|\balready (?:been )?approved\b"
+    r"|\bskip (?:all |any )?(?:the )?(?:confirmation|approval)s?\b"
+)
+_FINANCIAL_ACTION_RE = re.compile(r"\b(?:wire|transfer|send|pay)\b[^.\n]*\bto account [\d-]+")
+_SECRET_ENV_VALUE_RE = re.compile(r"\b\w*(?:api_key|secret|token|password)\w*\s+environment variable\b")
 # Descriptive security writing quotes attacks. An attacker can add these words
 # too, so this only lowers a match to MEDIUM instead of dropping it.
 _SECURITY_DISCUSSION_RE = re.compile(
     r"\battackers? (?:may|can|could|might|use|embed|hide)\b|\bprompt injection (?:is|attack)\b"
-    r"|\bthreat model\b|공격자는|프롬프트 인젝션"
+    r"|\bthreat model\b|\b(?:flagged|attempted to)\b|공격자는|프롬프트 인젝션"
 )
 _EXEC_TOOL_RE = re.compile(r"shell|exec|command|bash|cmd|powershell|terminal|\brun")
 _ENV_DUMP_RE = re.compile(r"^\s*(?:printenv|env|set|get-childitem env:|gci env:)\s*$")
@@ -663,8 +681,15 @@ def detect_text_rules(text: str) -> dict[str, str]:
     for sentence in re.split(r"(?<=[.!?。])\s+|\n+", normalized):
         if not _ACCESS_RE.search(sentence) or _NEGATED_ACCESS_RE.search(sentence):
             continue
-        if _SENSITIVE_PATH_RE.search(sentence):
+        if _SENSITIVE_PATH_RE.search(_ENV_FILE_RE.sub(" ", sentence)):
             high.add("RULE_SECRET_ACCESS")
+        elif _ENV_FILE_RE.search(sentence):
+            # Apps legitimately read .env, so it also needs a sign of misuse.
+            if (_SECRET_OWNER_RE.search(sentence) or _ALSO_RE.search(sentence)
+                    or addressed or concealed):
+                high.add("RULE_SECRET_ACCESS")
+            else:
+                medium = True
         elif _SECRET_NOUN_RE.search(sentence):
             if _SECRET_OWNER_RE.search(sentence) or addressed or concealed or external:
                 high.add("RULE_SECRET_ACCESS")
@@ -692,6 +717,10 @@ def detect_text_rules(text: str) -> dict[str, str]:
         high.add("RULE_TOOL_SHADOWING")
     if _PHISHING_RE.search(normalized) and external:
         high.add("RULE_AGENT_DIRECTED_INSTRUCTION")
+    if _FAKE_APPROVAL_RE.search(normalized) or _FINANCIAL_ACTION_RE.search(normalized):
+        high.add("RULE_AGENT_DIRECTED_INSTRUCTION")
+    if _SECRET_ENV_VALUE_RE.search(normalized) and _ACCESS_RE.search(normalized):
+        high.add("RULE_SECRET_ACCESS")
 
     if high and _SECURITY_DISCUSSION_RE.search(normalized):
         return {RULE_MEDIUM: "MEDIUM"}
