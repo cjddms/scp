@@ -85,13 +85,29 @@ def grouped(scored, key, threshold):
 
 
 SWEEP = (.50, .70, .80, .85, .90, .95, .97, .99)
+RULE_SURFACES = {"tool_definition": "tool", "tool_result": "tool", "resource": "resource", "prompt": "prompt"}
 
 
-def evaluate(directory, rows, threshold, details=False):
+def apply_rules(row, score):
+    """Combine as production does: HIGH detects; MEDIUM detects with ML doubt.
+    Returns (effective score, rule levels)."""
+    from MayAI import ML_SURFACE_THRESHOLDS, detect_text_rules
+
+    levels = set(detect_text_rules(row["text"]).values())
+    suspicious = ML_SURFACE_THRESHOLDS[RULE_SURFACES.get(row.get("surface"), "tool")][0]
+    return (1.0 if "HIGH" in levels or ("MEDIUM" in levels and score >= suspicious) else score), levels
+
+
+def evaluate(directory, rows, threshold, details=False, rules=False):
     candidate = Candidate(directory)
     scored, latencies = [], []
+    rule_counts = {"HIGH": 0, "MEDIUM": 0}
     for row in rows:
         score, latency = candidate.score(row["text"])
+        if rules:
+            score, levels = apply_rules(row, score)
+            for level in levels:
+                rule_counts[level] += 1
         scored.append((row, score))
         latencies.append(latency)
     overall = metrics(scored, threshold)
@@ -104,6 +120,8 @@ def evaluate(directory, rows, threshold, details=False):
                        "p99": percentile(latencies, .99)},
         "eligible": overall["recall"] >= .90 and overall["false_positive_rate"] <= .01 and p95 <= 250,
     }
+    if rules:
+        result["rule_hits"] = rule_counts
     if details:
         result["by_surface"] = grouped(scored, "surface", threshold)
         result["by_lang"] = grouped(scored, "lang", threshold)
@@ -128,11 +146,13 @@ def main():
     parser.add_argument("--threshold", type=float, default=.90)
     parser.add_argument("--details", action="store_true",
                         help="add per-surface/lang/category metrics, a threshold sweep and misclassified rows")
+    parser.add_argument("--rules", action="store_true",
+                        help="score the model combined with the MayAI rule detector")
     args = parser.parse_args()
     if not 1 <= len(args.candidates) <= 3:
         parser.error("provide one to three candidates")
     rows = load_dataset(args.dataset)
-    results = [evaluate(path, rows, args.threshold, args.details) for path in args.candidates]
+    results = [evaluate(path, rows, args.threshold, args.details, args.rules) for path in args.candidates]
     eligible = sorted((result for result in results if result["eligible"]),
                       key=lambda result: result["f1"], reverse=True)
     print(json.dumps({"results": results, "selected": eligible[0] if eligible else None},
