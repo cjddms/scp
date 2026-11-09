@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-AI-NAC Security Gateway - core engine (single-file implementation)
+MayAI Security Gateway - core engine (single-file implementation)
 
 Per the spec, the PROJECT'S CORE ENGINE is the Policy Engine (section 12:
-"Policy Engine은 AI-NAC의 핵심 엔진이다"), fed by Agent Auth, the MCP
+"Policy Engine은 MayAI의 핵심 엔진이다"), fed by Agent Auth, the MCP
 Inspector and the Risk/Security analyzers, and backed by SQLite logging.
 This file implements that whole pipeline end to end, in dependency order:
 
@@ -15,7 +15,7 @@ The MCP Protocol Inspector classifies every JSON-RPC message by MCP component
 
     MCP Client --HTTP--> mitmproxy addon  --\
                                              >--> MCP Security Pipeline --> Policy Engine --> nac.db
-    MCP Client --STDIO-> AI-NAC STDIO proxy --/
+    MCP Client --STDIO-> MayAI STDIO proxy --/
 
 Three ways to run it:
 
@@ -45,11 +45,14 @@ out of scope.
 #from __future__ import annotations 모든 타입 힌트가 문자열로 바뀜 
 
 import hashlib
+import hmac
+import fnmatch
 import ipaddress
 import json
 import math
 import os
 import re
+import secrets
 import sqlite3
 import sys
 import threading
@@ -101,9 +104,82 @@ CREATE TABLE IF NOT EXISTS agents (
     token_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',       -- active | disabled
     source_ip TEXT,                              -- fixed IPv4; NULL until migrated agent is updated
+    clearance INTEGER NOT NULL DEFAULT 2,        -- MAC clearance 1..4 (STDIO only)
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- MAC object labels (STDIO only): which security level a tool / resource /
+-- prompt of an internal MCP server holds, and what kind of data flow it is.
+CREATE TABLE IF NOT EXISTS mac_labels (
+    label_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    target TEXT NOT NULL DEFAULT '*',            -- stdio:<server-name> or *
+    object_pattern TEXT NOT NULL DEFAULT '*',    -- tool name, resource uri or prompt name; glob allowed
+    level INTEGER NOT NULL,                      -- 1 Public .. 4 Critical
+    flow TEXT NOT NULL DEFAULT 'read',           -- read | write | egress
+    description TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- MAC session: the highest level of data one authenticated agent run has
+-- received (high-water mark). Shared by every STDIO proxy of that run.
+CREATE TABLE IF NOT EXISTS mac_sessions (
+    session_id TEXT PRIMARY KEY,                 -- <agent_id>:<agent process id>
+    agent_id TEXT NOT NULL,
+    level INTEGER NOT NULL DEFAULT 1,
+    raised_by TEXT,                              -- object that raised the level last
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    revoked INTEGER NOT NULL DEFAULT 0,          -- 1 = invalidated (agent quarantined)
+    revoked_reason TEXT
+);
+
+-- Agent trust state (STDIO zero trust). Kept apart from sessions: a session
+-- can be reset or expire, this row cannot. It is never deleted, not even with
+-- the agent, so re-registering the same agent_id inherits it.
+CREATE TABLE IF NOT EXISTS agent_trust (
+    agent_id TEXT PRIMARY KEY,
+    trust_status TEXT NOT NULL DEFAULT 'NORMAL', -- NORMAL | SUSPICIOUS | COMPROMISED | RECOVERY
+    risk_score INTEGER NOT NULL DEFAULT 0,       -- highest request risk score since last verification
+    violation_count INTEGER NOT NULL DEFAULT 0,  -- agent-side high-risk violations since last verification
+    exfil_count INTEGER NOT NULL DEFAULT 0,      -- MAC write-down (leak) attempts since last verification
+    exposure_count INTEGER NOT NULL DEFAULT 0,   -- injected instructions the agent received
+    last_verified_at TEXT,
+    last_security_event TEXT,
+    last_security_event_at TEXT,
+    quarantine_reason TEXT,
+    quarantined_at TEXT,
+    revoked_token_hash TEXT,                     -- token in use when quarantined; recovery needs a new one
+    recovery_status TEXT NOT NULL DEFAULT 'NONE',-- NONE | REQUESTED | PROBATION
+    recovery_note TEXT,
+    integrity_status TEXT NOT NULL DEFAULT 'UNVERIFIABLE', -- no runtime attestation exists yet
+    policy_version INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+
+-- Append-only audit trail with a hash chain: trust transitions, session
+-- issuance and every admin API change. Triggers refuse UPDATE/DELETE through
+-- SQLite; the chain makes edits that bypass them detectable.
+CREATE TABLE IF NOT EXISTS audit_log (
+    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    actor TEXT NOT NULL,                         -- system | admin | admin:<approver>
+    category TEXT NOT NULL,                      -- trust | session | admin_api
+    agent_id TEXT,
+    action TEXT NOT NULL,
+    from_status TEXT,
+    to_status TEXT,
+    detail TEXT,
+    prev_hash TEXT NOT NULL,
+    hash TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END;
 
 CREATE TABLE IF NOT EXISTS policies (
     policy_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,7 +188,6 @@ CREATE TABLE IF NOT EXISTS policies (
     target TEXT NOT NULL DEFAULT '*',
     tool TEXT NOT NULL DEFAULT '*',
     action TEXT NOT NULL,                        -- ALLOW | DENY
-    priority INTEGER NOT NULL DEFAULT 100,        -- lower = higher priority
     enabled INTEGER NOT NULL DEFAULT 1,
     description TEXT,
     created_at TEXT NOT NULL,
@@ -127,7 +202,6 @@ CREATE TABLE IF NOT EXISTS response_policies (
     tool TEXT NOT NULL DEFAULT '*',
     finding TEXT NOT NULL DEFAULT '*',
     action TEXT NOT NULL,                        -- ALLOW | DENY
-    priority INTEGER NOT NULL DEFAULT 100,       -- lower = higher priority
     enabled INTEGER NOT NULL DEFAULT 1,
     description TEXT,
     created_at TEXT NOT NULL,
@@ -327,6 +401,8 @@ def init_db() -> None:
             "ml_model_dir": str(MODEL_DIR),
             "ml_model_revision": MODEL_REVISION,
             "ml_threshold_version": THRESHOLD_VERSION,
+            **TRUST_SETTING_DEFAULTS,
+            "policy_version": "0",
         }
         for key, value in defaults.items():
             conn.execute(
@@ -359,6 +435,21 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     for column, declaration in response_log_additions.items():
         if column not in response_log_columns:
             conn.execute(f"ALTER TABLE response_logs ADD COLUMN {column} {declaration}")
+
+    agent_columns = {row["name"] for row in conn.execute("PRAGMA table_info(agents)")}
+    if "clearance" not in agent_columns:
+        conn.execute("ALTER TABLE agents ADD COLUMN clearance INTEGER NOT NULL DEFAULT 2")
+    session_columns = {row["name"] for row in conn.execute("PRAGMA table_info(mac_sessions)")}
+    if "revoked" not in session_columns:
+        conn.execute("ALTER TABLE mac_sessions ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
+    if "revoked_reason" not in session_columns:
+        conn.execute("ALTER TABLE mac_sessions ADD COLUMN revoked_reason TEXT")
+
+    # Policies no longer have an operator-set order; drop the old column.
+    for table in ("policies", "response_policies"):
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "priority" in columns:
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN priority")
 
 
 def normalize_ipv4(value: str) -> str:
@@ -955,7 +1046,7 @@ class PolicyDecision:
     reason: str
 
 def _specificity(row: sqlite3.Row) -> int:
-    """More non-wildcard fields = more specific = higher priority match."""
+    """More non-wildcard fields = more specific = wins the match."""
     return sum(1 for f in ("agent_id", "target", "tool") if row[f] != "*")
 
 
@@ -972,10 +1063,10 @@ def evaluate_policy(agent_id: str, target: str, tool: str) -> PolicyDecision:
     if not rows:
         return PolicyDecision("DENY", None, "no matching policy (default deny)")
 
-    # Priority order (spec section 12): explicit DENY > explicit ALLOW,
-    # then most specific match, then lowest priority number.
+    # Order (spec section 12): explicit DENY > explicit ALLOW, then the most
+    # specific match; the oldest policy breaks an exact tie.
     def sort_key(r: sqlite3.Row):
-        return (0 if r["action"] == "DENY" else 1, -_specificity(r), r["priority"])
+        return (0 if r["action"] == "DENY" else 1, -_specificity(r), r["policy_id"])
 
     best = sorted(rows, key=sort_key)[0]
     return PolicyDecision(best["action"], best["policy_id"], best["description"] or f"matched policy '{best['name']}'")
@@ -1044,8 +1135,7 @@ def evaluate_response_policy(agent_id: str, target: str, tool: str,
                              findings: list[str]) -> ResponsePolicyDecision:
     """Match response-only policy. Unlike request policy, no match is ALLOW.
 
-    Specificity wins first, then the operator priority, and DENY only wins a
-    complete tie. A '*' finding deliberately matches clean responses too, so
+    Specificity wins first, and DENY only wins a complete tie. A '*' finding deliberately matches clean responses too, so
     an operator can define a blanket response rule for a narrow context.
     """
     matchable_findings = list(dict.fromkeys(
@@ -1072,7 +1162,7 @@ def evaluate_response_policy(agent_id: str, target: str, tool: str,
         )
 
     def sort_key(row: sqlite3.Row):
-        return (-specificity(row), row["priority"], 0 if row["action"] == "DENY" else 1)
+        return (-specificity(row), 0 if row["action"] == "DENY" else 1, row["response_policy_id"])
 
     # Resolve policy independently for every finding. An ALLOW exception for
     # sensitive data must not accidentally waive a separate ID-mismatch DENY.
@@ -1791,7 +1881,7 @@ def write_response_log(context: dict[str, Any], status_code: int, content_type: 
 def response_block_payload(context: dict[str, Any], response_id: int,
                            reason: str) -> bytes:
     data = {
-        "code": "AI_NAC_RESPONSE_BLOCKED",
+        "code": "MAYAI_RESPONSE_BLOCKED",
         "response_id": response_id,
         "reason": reason,
     }
@@ -1801,16 +1891,590 @@ def response_block_payload(context: dict[str, Any], response_id: int,
             "id": context.get("jsonrpc_id"),
             "error": {
                 "code": -32003,
-                "message": "AI-NAC response blocked by policy",
+                "message": "MayAI response blocked by policy",
                 "data": data,
             },
         }
     else:
         payload = {
-            "error": "AI-NAC response blocked by policy",
+            "error": "MayAI response blocked by policy",
             **data,
         }
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+# --------------------------------------------------------------------------
+# MAC (Mandatory Access Control) - STDIO zero trust layer
+#
+# Internal MCP servers run as child processes of the agent, so being "inside"
+# earns no trust. On top of the request policy, every data-access call is
+# checked against security levels the operator assigns and the agent cannot
+# change (Bell-LaPadula):
+#   - no read up:    an object above the agent's clearance is never reached
+#   - no write down: once a session received level-N data, write / egress
+#                    calls to objects below N are refused
+# The session level only rises (high-water mark). It starts over when the
+# agent authenticates again as a new run, or when an operator resets it.
+# --------------------------------------------------------------------------
+
+MAC_LEVELS = {1: "Public (공개정보)", 2: "Internal (내부정보)",
+              3: "Restricted (제한정보)", 4: "Critical (핵심기밀)"}
+MAC_BASE_LEVEL = 1            # a fresh session has received nothing yet
+MAC_DEFAULT_CLEARANCE = 2     # agents without an explicit clearance
+MAC_UNLABELED_LEVEL = 4       # unknown object = most sensitive (default deny)
+MAC_SENSITIVE_LEVEL = 3       # response carried personal / secret data
+MAC_FLOWS = ("read", "write", "egress")
+# Calls that move data in or out. Discovery and lifecycle traffic (initialize,
+# */list, ping, notifications) carries no business data and is left to policy.
+MAC_METHODS = frozenset({"tools/call", "resources/read", "prompts/get"})
+_FLOW_RANK = {"read": 0, "write": 1, "egress": 2}
+
+
+def mac_session_id(agent_id: str) -> str:
+    """One authenticated agent run = one MAC session. Every STDIO proxy that
+    run launches shares its parent process, so they share the session; a new
+    run (re-authentication) gets a new one."""
+    return f"{agent_id}:{os.getppid()}"
+
+
+def _mac_label(conn: sqlite3.Connection, target: str, object_name: str) -> dict[str, Any]:
+    """Most specific label wins (exact object > glob > *, then a named target);
+    on a tie the stricter level and flow win."""
+    best, best_key = None, None
+    for row in conn.execute("SELECT * FROM mac_labels WHERE target IN (?, '*')", (target,)):
+        pattern = row["object_pattern"]
+        if pattern == object_name:
+            score = 4
+        elif pattern == "*":
+            score = 0
+        elif fnmatch.fnmatchcase(object_name, pattern):
+            score = 2
+        else:
+            continue
+        score += 1 if row["target"] != "*" else 0
+        key = (score, row["level"], _FLOW_RANK.get(row["flow"], 2))
+        if best_key is None or key > best_key:
+            best, best_key = row, key
+    if best is None:
+        return {"label_id": None, "name": None, "level": MAC_UNLABELED_LEVEL, "flow": "read"}
+    return {"label_id": best["label_id"], "name": best["name"], "level": best["level"],
+            "flow": best["flow"]}
+
+
+@dataclass
+class MacDecision:
+    allowed: bool
+    finding: Optional[str]
+    reason: str
+    context: Optional[dict[str, Any]]   # carried to the response half to raise the session
+
+
+def evaluate_mac(agent: sqlite3.Row, session_id: str, target: str, mcp_method: str,
+                 object_name: str) -> MacDecision:
+    if mcp_method not in MAC_METHODS:
+        return MacDecision(True, None, "MAC not applicable", None)
+    clearance = agent["clearance"] or MAC_DEFAULT_CLEARANCE
+    with db() as conn:
+        session = conn.execute("SELECT level FROM mac_sessions WHERE session_id=?",
+                               (session_id,)).fetchone()
+        if session is None:  # issued by trust_gate; missing means something is wrong
+            raise RuntimeError(f"MAC session {session_id} was not issued (fail-closed)")
+        session_level = session["level"]
+        label = _mac_label(conn, target, object_name)
+    shown = f"{object_name or mcp_method} (L{label['level']} {label['flow']}" + \
+            (", unlabeled)" if label["label_id"] is None else ")")
+    context = {"session_id": session_id, "agent_id": agent["agent_id"], "target": target,
+               "object": object_name or mcp_method, **label}
+    if label["level"] > clearance:
+        return MacDecision(False, "MAC_READ_UP_DENY",
+                           f"MAC: {shown} is above agent clearance L{clearance}", context)
+    if label["flow"] in ("write", "egress") and label["level"] < session_level:
+        return MacDecision(False, "MAC_WRITE_DOWN_DENY",
+                           f"MAC: session holds L{session_level} data; {label['flow']} to {shown}"
+                           " would leak it down", context)
+    return MacDecision(True, None, f"MAC: {shown} allowed (session L{session_level})", context)
+
+
+def mac_record_access(mac: dict[str, Any], findings: list[str]) -> Optional[int]:
+    """Raise the session to the level of the data the agent actually received.
+    Returns the new level when it rose."""
+    new_level = mac["level"] if mac["flow"] == "read" else MAC_BASE_LEVEL
+    if "RESPONSE_SENSITIVE_DATA" in findings:
+        new_level = max(new_level, MAC_SENSITIVE_LEVEL)
+    with db() as conn:
+        row = conn.execute("SELECT level FROM mac_sessions WHERE session_id=?",
+                           (mac["session_id"],)).fetchone()
+        old_level = row["level"] if row else MAC_BASE_LEVEL
+        if new_level <= old_level:
+            return None
+        conn.execute(
+            "INSERT INTO mac_sessions (session_id, agent_id, level, raised_by, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET level=excluded.level,"
+            " raised_by=excluded.raised_by, updated_at=excluded.updated_at",
+            (mac["session_id"], mac["agent_id"], new_level, mac["object"], _now(), _now()))
+    write_event(mac["agent_id"], "MAC_LEVEL_RAISED", "low", mac["target"], 0,
+                f"session {mac['session_id']}: L{old_level} -> L{new_level} after {mac['object']}")
+    return new_level
+
+
+# --------------------------------------------------------------------------
+# Agent trust state - STDIO zero trust, persistent and separate from sessions
+#
+# A session (one agent run) may be reset; the agent's trust state may not.
+# Authentication proves identity only - it never restores trust. Every STDIO
+# request passes one decision point (_stdio_zero_trust):
+#     trust gate -> request policy -> MAC -> trust restriction
+# and each step can only narrow what the step before allowed.
+#
+#   NORMAL       full MAC scope
+#   SUSPICIOUS   restricted inside MAC: read-only up to trust_restricted_max_level
+#   COMPROMISED  every request refused, sessions revoked, token revoked
+#   RECOVERY     data access refused until an operator approves recovery
+#   NORMAL + recovery_status PROBATION: restricted like SUSPICIOUS, and one
+#                more violation goes straight back to COMPROMISED
+# --------------------------------------------------------------------------
+
+TRUST_STATES = ("NORMAL", "SUSPICIOUS", "COMPROMISED", "RECOVERY")
+# Provisional operator settings (dashboard-editable), not a published standard.
+TRUST_SETTING_DEFAULTS = {
+    "trust_suspicious_after": "1",          # high-risk signals (violations + injections received)
+    "trust_compromised_after": "3",         # agent-side high-risk violations
+    "trust_compromised_exfil_after": "2",   # MAC write-down (leak) attempts
+    "trust_restricted_max_level": "2",      # SUSPICIOUS / probation: read-only up to this level
+}
+# The agent itself asked for something dangerous.
+TRUST_VIOLATION_FINDINGS = frozenset({"MAC_READ_UP_DENY", "MAC_WRITE_DOWN_DENY",
+                                      "REQUEST_DANGEROUS_COMMAND", "REQUEST_SENSITIVE_PATH"})
+TRUST_EXFIL_FINDINGS = frozenset({"MAC_WRITE_DOWN_DENY"})
+# The agent received injected instructions. This can make it SUSPICIOUS but
+# never COMPROMISED on its own: that would convict the agent for the server.
+TRUST_EXPOSURE_FINDINGS = frozenset({
+    "TOOL_RESULT_INJECTION", "RESOURCE_CONTENT_INJECTION", "PROMPT_CONTENT_INJECTION",
+    "TOOL_DEFINITION_INJECTION", "RESOURCE_DEFINITION_INJECTION", "PROMPT_DEFINITION_INJECTION",
+    RULE_CONFIRMED,
+})
+_AUDIT_GENESIS = "0" * 64
+
+
+class TrustError(Exception):
+    """A refused trust operation; status_code maps straight to the API."""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+@contextmanager
+def db_tx():
+    """Write transaction holding the DB write lock from the start (BEGIN
+    IMMEDIATE): read-check-update sequences (trust transitions, the audit hash
+    chain) cannot interleave across threads or STDIO proxy processes."""
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        yield conn
+
+
+def _audit_hash(ts, actor, category, agent_id, action, from_status, to_status, detail, prev_hash) -> str:
+    body = json.dumps([ts, actor, category, agent_id, action, from_status, to_status, detail, prev_hash],
+                      ensure_ascii=False)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _audit(conn: sqlite3.Connection, actor: str, category: str, action: str, *,
+           agent_id: Optional[str] = None, from_status: Optional[str] = None,
+           to_status: Optional[str] = None, detail: str = "") -> None:
+    """Append one audit row. Call inside db_tx() so the chain stays linear."""
+    prev = conn.execute("SELECT hash FROM audit_log ORDER BY audit_id DESC LIMIT 1").fetchone()
+    prev_hash = prev["hash"] if prev else _AUDIT_GENESIS
+    ts = _now()
+    digest = _audit_hash(ts, actor, category, agent_id, action, from_status, to_status, detail, prev_hash)
+    conn.execute(
+        "INSERT INTO audit_log (timestamp, actor, category, agent_id, action, from_status, to_status,"
+        " detail, prev_hash, hash) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (ts, actor, category, agent_id, action, from_status, to_status, detail, prev_hash, digest))
+
+
+def verify_audit_chain() -> dict[str, Any]:
+    prev_hash, checked = _AUDIT_GENESIS, 0
+    with db() as conn:
+        for row in conn.execute("SELECT * FROM audit_log ORDER BY audit_id"):
+            expected = _audit_hash(row["timestamp"], row["actor"], row["category"], row["agent_id"],
+                                   row["action"], row["from_status"], row["to_status"], row["detail"],
+                                   prev_hash)
+            if row["prev_hash"] != prev_hash or row["hash"] != expected:
+                return {"ok": False, "checked": checked, "broken_at": row["audit_id"]}
+            prev_hash, checked = row["hash"], checked + 1
+    return {"ok": True, "checked": checked, "broken_at": None}
+
+
+def trust_settings(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = {r["setting_key"]: r["value"] for r in conn.execute(
+        "SELECT setting_key, value FROM settings WHERE setting_key LIKE 'trust_%'"
+        " OR setting_key = 'policy_version'")}
+    out = {key: int(rows.get(key, default)) for key, default in TRUST_SETTING_DEFAULTS.items()}
+    out["policy_version"] = int(rows.get("policy_version", 0))
+    return out
+
+
+def bump_policy_version(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT INTO settings (setting_key, value, updated_at) VALUES ('policy_version', '1', ?)"
+        " ON CONFLICT(setting_key) DO UPDATE SET value = CAST(value AS INTEGER) + 1,"
+        " updated_at = excluded.updated_at", (_now(),))
+
+
+def _trust_row(conn: sqlite3.Connection, agent_id: str) -> sqlite3.Row:
+    conn.execute("INSERT OR IGNORE INTO agent_trust (agent_id, trust_status, last_verified_at, updated_at)"
+                 " VALUES (?, 'NORMAL', ?, ?)", (agent_id, _now(), _now()))
+    return conn.execute("SELECT * FROM agent_trust WHERE agent_id=?", (agent_id,)).fetchone()
+
+
+def _status_label(status: str, recovery_status: str) -> str:
+    return f"{status}/{recovery_status}" if recovery_status not in (None, "NONE") else status
+
+
+def _set_trust(conn: sqlite3.Connection, row: sqlite3.Row, to_status: str, *, actor: str,
+               action: str, reason: str, **fields: Any) -> None:
+    """The only place trust_status changes. Quarantine revokes the agent's
+    sessions and token in the same transaction, so no request can see a
+    COMPROMISED agent with a live session."""
+    agent_id = row["agent_id"]
+    fields.update(trust_status=to_status, updated_at=_now(),
+                  policy_version=trust_settings(conn)["policy_version"])
+    detail = reason
+    if to_status == "COMPROMISED":
+        token = conn.execute("SELECT token_hash FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+        fields.update(quarantine_reason=reason, quarantined_at=_now(), recovery_status="NONE",
+                      revoked_token_hash=token["token_hash"] if token else None)
+        revoked = conn.execute("UPDATE mac_sessions SET revoked=1, revoked_reason=?"
+                               " WHERE agent_id=? AND revoked=0", (reason, agent_id)).rowcount
+        detail = f"{reason} (sessions revoked: {revoked}; token revoked)"
+    cols = ", ".join(f"{key}=?" for key in fields)
+    conn.execute(f"UPDATE agent_trust SET {cols} WHERE agent_id=?", (*fields.values(), agent_id))
+    _audit(conn, actor, "trust", action, agent_id=agent_id,
+           from_status=_status_label(row["trust_status"], row["recovery_status"]),
+           to_status=_status_label(to_status, fields.get("recovery_status", row["recovery_status"])),
+           detail=detail)
+
+
+@dataclass
+class TrustDecision:
+    allowed: bool
+    finding: Optional[str]
+    reason: str
+    status: str
+    restricted: bool
+    max_level: int
+
+
+def trust_gate(agent: sqlite3.Row, session_id: str, mcp_method: str) -> TrustDecision:
+    """Session issuance + trust check, on every STDIO request (always the
+    latest committed state, no cache). A new session never starts clean: it
+    inherits the data level of the agent's latest session."""
+    agent_id = agent["agent_id"]
+    with db_tx() as conn:
+        row = _trust_row(conn, agent_id)
+        settings = trust_settings(conn)
+        status, max_level = row["trust_status"], settings["trust_restricted_max_level"]
+        restricted = status == "SUSPICIOUS" or row["recovery_status"] == "PROBATION"
+
+        def deny(reason: str) -> TrustDecision:
+            return TrustDecision(False, "TRUST_QUARANTINED", reason, status, True, max_level)
+
+        if status == "COMPROMISED":
+            return deny(f"agent quarantined (COMPROMISED since {row['quarantined_at']}):"
+                        f" {row['quarantine_reason']}; re-authentication does not restore trust")
+        session = conn.execute("SELECT revoked, revoked_reason FROM mac_sessions WHERE session_id=?",
+                               (session_id,)).fetchone()
+        if session is not None and session["revoked"]:
+            return deny(f"session {session_id} was revoked ({session['revoked_reason']});"
+                        " a new agent run is needed after recovery")
+        if session is None:
+            prev = conn.execute("SELECT level, raised_by FROM mac_sessions WHERE agent_id=?"
+                                " ORDER BY updated_at DESC, rowid DESC LIMIT 1", (agent_id,)).fetchone()
+            level = prev["level"] if prev else MAC_BASE_LEVEL
+            conn.execute(
+                "INSERT INTO mac_sessions (session_id, agent_id, level, raised_by, created_at, updated_at,"
+                " revoked) VALUES (?,?,?,?,?,?,0)",
+                (session_id, agent_id, level, prev["raised_by"] if prev else None, _now(), _now()))
+            _audit(conn, "system", "session", "SESSION_ISSUED", agent_id=agent_id,
+                   to_status=_status_label(status, row["recovery_status"]),
+                   detail=f"{session_id}: starts at L{level}"
+                          + (" (inherited from the previous session)" if prev else "")
+                          + (f"; restricted to read-only <= L{max_level}" if restricted else ""))
+        if status == "RECOVERY" and mcp_method in MAC_METHODS:
+            return deny("agent in RECOVERY: data access is suspended until an operator approves recovery")
+    return TrustDecision(True, None, "trust gate passed", status, restricted, max_level)
+
+
+def trust_observe(agent_id: str, findings: list[str], *, risk_score: int = 0,
+                  ignore: frozenset[str] | set[str] = frozenset()) -> tuple[str, bool, int]:
+    """Count risk signals and move the agent automatically:
+    NORMAL -> SUSPICIOUS -> COMPROMISED. Never moves it back up.
+    Returns (status, restricted, restricted_max_level)."""
+    signals = [f for f in findings if f not in ignore]
+    violations = [f for f in signals if f in TRUST_VIOLATION_FINDINGS]
+    exfil = [f for f in violations if f in TRUST_EXFIL_FINDINGS]
+    exposure = [f for f in signals if f in TRUST_EXPOSURE_FINDINGS]
+    changed: Optional[tuple[str, str]] = None
+    with db_tx() as conn:
+        row = _trust_row(conn, agent_id)
+        settings = trust_settings(conn)
+        status = row["trust_status"]
+        probation = row["recovery_status"] == "PROBATION"
+        if violations or exposure or risk_score > row["risk_score"]:
+            v = row["violation_count"] + len(violations)
+            e = row["exfil_count"] + len(exfil)
+            x = row["exposure_count"] + len(exposure)
+            fields: dict[str, Any] = {"violation_count": v, "exfil_count": e, "exposure_count": x,
+                                      "risk_score": max(row["risk_score"], risk_score), "updated_at": _now()}
+            if violations or exposure:
+                fields.update(last_security_event=(violations or exposure)[0], last_security_event_at=_now())
+            cols = ", ".join(f"{key}=?" for key in fields)
+            conn.execute(f"UPDATE agent_trust SET {cols} WHERE agent_id=?", (*fields.values(), agent_id))
+            if status in ("NORMAL", "SUSPICIOUS") and violations and (
+                    probation or v >= settings["trust_compromised_after"]
+                    or e >= settings["trust_compromised_exfil_after"]):
+                why = (f"violation during post-recovery probation: {', '.join(violations)}" if probation else
+                       f"{v} high-risk violations / {e} leak attempts (thresholds"
+                       f" {settings['trust_compromised_after']} / {settings['trust_compromised_exfil_after']});"
+                       f" last: {', '.join(violations)}")
+                _set_trust(conn, row, "COMPROMISED", actor="system", action="AUTO_QUARANTINE", reason=why)
+                changed = ("COMPROMISED", why)
+            elif status == "NORMAL" and (violations or exposure) and v + x >= settings["trust_suspicious_after"]:
+                why = (f"{v + x} high-risk signals (threshold {settings['trust_suspicious_after']});"
+                       f" last: {', '.join(violations or exposure)}")
+                _set_trust(conn, row, "SUSPICIOUS", actor="system", action="AUTO_RESTRICT", reason=why)
+                changed = ("SUSPICIOUS", why)
+    if changed:
+        write_event(agent_id, f"TRUST_{changed[0]}", "high" if changed[0] == "COMPROMISED" else "medium",
+                    None, risk_score, changed[1])
+    final = changed[0] if changed else status
+    restricted = final == "SUSPICIOUS" or (final == "NORMAL" and probation)
+    return final, restricted, settings["trust_restricted_max_level"]
+
+
+def trust_after_response(agent_id: str, session_id: str, findings: list[str]) -> Optional[str]:
+    """Response half: count injections the agent received, then re-check the
+    trust state - work that was in flight when the agent got quarantined is
+    stopped here. Returns the reason to withhold the response, else None."""
+    status, _, _ = trust_observe(agent_id, findings)
+    with db() as conn:
+        session = conn.execute("SELECT revoked FROM mac_sessions WHERE session_id=?",
+                               (session_id,)).fetchone()
+    if status in ("COMPROMISED", "RECOVERY") or (session is not None and session["revoked"]):
+        return f"response withheld: agent trust is {status}; in-flight work stopped"
+    return None
+
+
+def _stdio_zero_trust(agent: sqlite3.Row, session_id: str, insp: "InspectionResult",
+                      findings: "SecurityFindings", risk_score: int,
+                      policy: PolicyDecision) -> tuple[PolicyDecision, Optional["MacDecision"]]:
+    """STDIO policy decision point: trust gate -> request policy -> MAC ->
+    trust restriction. Risk-based trust can only narrow MAC, never widen it."""
+    gate = trust_gate(agent, session_id, insp.mcp_method)
+    mac: Optional[MacDecision] = None
+    if not gate.allowed:
+        findings.notes.append(gate.finding)
+        policy = PolicyDecision("DENY", None, gate.reason)
+    elif policy.action == "ALLOW":
+        mac = evaluate_mac(agent, session_id, insp.target, insp.mcp_method, insp.object_name)
+        if not mac.allowed:
+            policy = PolicyDecision("DENY", None, mac.reason)
+            findings.notes.append(mac.finding)
+    ignore = set()
+    if mac and not mac.allowed and mac.context and mac.context["label_id"] is None:
+        ignore.add("MAC_READ_UP_DENY")   # an unlabeled object is a labeling gap, not an attack
+    status, restricted, max_level = trust_observe(agent["agent_id"], findings.notes,
+                                                  risk_score=risk_score, ignore=ignore)
+    if policy.action == "ALLOW":
+        if status == "COMPROMISED":   # this very request crossed the quarantine threshold
+            findings.notes.append("TRUST_QUARANTINED")
+            policy = PolicyDecision("DENY", None, "agent became COMPROMISED during this request")
+        elif restricted and mac and mac.context:
+            level, flow = mac.context["level"], mac.context["flow"]
+            if flow != "read" or level > max_level:
+                findings.notes.append("TRUST_RESTRICTED_DENY")
+                policy = PolicyDecision(
+                    "DENY", None, f"trust restricted ({status}{'/PROBATION' if gate.restricted and status == 'NORMAL' else ''}):"
+                                  f" only read up to L{max_level}; {flow} L{level} refused")
+    return policy, mac
+
+
+def _trust_target(conn: sqlite3.Connection, agent_id: str) -> sqlite3.Row:
+    known = conn.execute("SELECT 1 FROM agents WHERE agent_id=? UNION SELECT 1 FROM agent_trust"
+                         " WHERE agent_id=?", (agent_id, agent_id)).fetchone()
+    if not known:
+        raise TrustError(404, f"unknown agent: {agent_id}")
+    return _trust_row(conn, agent_id)
+
+
+def _approver(approver: str) -> str:
+    approver = (approver or "").strip()
+    if not approver:
+        raise TrustError(422, "approver is required")
+    return f"admin:{approver}"
+
+
+def trust_quarantine(agent_id: str, approver: str, reason: str) -> None:
+    actor = _approver(approver)
+    with db_tx() as conn:
+        row = _trust_target(conn, agent_id)
+        if row["trust_status"] == "COMPROMISED":
+            raise TrustError(409, "agent is already COMPROMISED")
+        _set_trust(conn, row, "COMPROMISED", actor=actor, action="MANUAL_QUARANTINE",
+                   reason=reason.strip() or "manual quarantine")
+    write_event(agent_id, "TRUST_COMPROMISED", "high", None, 0, f"manual quarantine by {actor}: {reason}")
+
+
+def trust_request_recovery(agent_id: str, approver: str, cause_resolved: bool, note: str) -> None:
+    """Recovery steps 1-3: request, identity is re-checked on every request
+    anyway, and the operator must state that the cause was removed."""
+    actor = _approver(approver)
+    if not cause_resolved:
+        raise TrustError(422, "confirm that the cause of the compromise was removed")
+    if not note.strip():
+        raise TrustError(422, "describe what was done to remove the cause")
+    with db_tx() as conn:
+        row = _trust_target(conn, agent_id)
+        if row["trust_status"] != "COMPROMISED":
+            raise TrustError(409, f"recovery starts from COMPROMISED, agent is {row['trust_status']}")
+        _set_trust(conn, row, "RECOVERY", actor=actor, action="RECOVERY_REQUESTED",
+                   reason=f"cause removed: {note.strip()}", recovery_status="REQUESTED",
+                   recovery_note=note.strip(), integrity_status="UNVERIFIABLE")
+
+
+def trust_approve_recovery(agent_id: str, approver: str, note: str,
+                           accept_unverified_integrity: bool) -> None:
+    """Recovery steps 4-8: token must be rotated, integrity that cannot be
+    verified must be explicitly accepted, then NORMAL under probation."""
+    actor = _approver(approver)
+    with db_tx() as conn:
+        row = _trust_target(conn, agent_id)
+        if row["trust_status"] != "RECOVERY":
+            raise TrustError(409, f"approval needs RECOVERY, agent is {row['trust_status']}")
+        agent = conn.execute("SELECT token_hash FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+        if agent is None:
+            raise TrustError(409, "agent is not registered; register it again with a new token first")
+        if row["revoked_token_hash"] and agent["token_hash"] == row["revoked_token_hash"]:
+            raise TrustError(409, "token not rotated: issue a new agent token before approving recovery")
+        if row["integrity_status"] != "VERIFIED" and not accept_unverified_integrity:
+            raise TrustError(409, "runtime integrity could not be verified (UNVERIFIABLE);"
+                                  " approve only with explicit acceptance")
+        integrity = row["integrity_status"] + (" - accepted unverified by approver"
+                                               if row["integrity_status"] != "VERIFIED" else "")
+        _set_trust(conn, row, "NORMAL", actor=actor, action="RECOVERY_APPROVED",
+                   reason=f"{note.strip() or 'approved'}; token rotated; integrity {integrity}",
+                   recovery_status="PROBATION", violation_count=0, exfil_count=0, exposure_count=0,
+                   risk_score=0, last_verified_at=_now())
+
+
+def trust_verify(agent_id: str, approver: str, note: str) -> None:
+    """SUSPICIOUS -> NORMAL, or end post-recovery probation. Operator only."""
+    actor = _approver(approver)
+    with db_tx() as conn:
+        row = _trust_target(conn, agent_id)
+        if row["trust_status"] == "SUSPICIOUS":
+            action = "TRUST_VERIFIED"
+        elif row["trust_status"] == "NORMAL" and row["recovery_status"] == "PROBATION":
+            action = "PROBATION_ENDED"
+        else:
+            raise TrustError(409, f"nothing to verify: agent is {_status_label(row['trust_status'], row['recovery_status'])}")
+        _set_trust(conn, row, "NORMAL", actor=actor, action=action, reason=note.strip() or "verified by operator",
+                   recovery_status="NONE", violation_count=0, exfil_count=0, exposure_count=0,
+                   risk_score=0, last_verified_at=_now())
+
+
+# --------------------------------------------------------------------------
+# Admin key: every state-changing management API call needs X-Admin-Key.
+# STDIO agents run on the gateway host, so an open admin API would let a
+# compromised agent approve its own recovery.
+# --------------------------------------------------------------------------
+
+def ensure_admin_key() -> Optional[str]:
+    """MAYAI_ADMIN_KEY wins; otherwise keep the stored hash, or generate a key
+    once and return it so the operator sees it. Only the hash is stored."""
+    env_key = os.environ.get("MAYAI_ADMIN_KEY", "").strip()
+    generated = None
+    with db() as conn:
+        if env_key:
+            value = hash_token(env_key)
+        elif conn.execute("SELECT 1 FROM settings WHERE setting_key='admin_key_hash'").fetchone():
+            return None
+        else:
+            generated = secrets.token_urlsafe(18)
+            value = hash_token(generated)
+        conn.execute("INSERT INTO settings (setting_key, value, updated_at) VALUES ('admin_key_hash', ?, ?)"
+                     " ON CONFLICT(setting_key) DO UPDATE SET value=excluded.value,"
+                     " updated_at=excluded.updated_at", (value, _now()))
+    return generated
+
+
+def admin_key_valid(key: str) -> bool:
+    if not key:
+        return False
+    with db() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE setting_key='admin_key_hash'").fetchone()
+    return bool(row) and hmac.compare_digest(row["value"], hash_token(key))
+
+
+# Admin calls that write their own, more precise audit row (trust actions,
+# session resets): the middleware does not log them a second time.
+_SELF_AUDITED = ("/api/trust/", "/api/mac/sessions/")
+# Bookkeeping, not policy: audited but does not bump the policy version.
+_NOT_POLICY = ("/api/logs", "/api/decisions/", "/api/response-decisions/")
+_ADMIN_RESOURCES = [  # (path prefix, Korean name) - longest prefix first
+    ("/api/response-policies", "응답 정책"), ("/api/response-decisions", "응답 판정"),
+    ("/api/settings/response-enforcement", "응답 차단 모드"), ("/api/mac/labels", "MAC 라벨"),
+    ("/api/policies", "요청 정책"), ("/api/decisions", "요청 판정"), ("/api/agents", "에이전트"),
+    ("/api/logs", "로그"),
+]
+_QUERY_KO = {"token": "토큰 재설정", "clearance": "허가 등급", "status": "상태", "source_ip": "출발지 IP"}
+
+
+def describe_admin_change(method: str, path: str, query: dict[str, str],
+                          body: Any) -> tuple[Optional[str], str]:
+    """(agent_id, Korean one-liner) for the audit log. Secrets are never
+    copied: only which fields changed, and a token only as 'reset'."""
+    name = next((ko for prefix, ko in _ADMIN_RESOURCES if path.startswith(prefix)), path)
+    rest = path.split("/")[3:] if path.startswith("/api/") else []
+    prefix_parts = next((len(prefix.split("/")) - 3 for prefix, ko in _ADMIN_RESOURCES
+                         if path.startswith(prefix)), 0)
+    ident = "/".join(rest[prefix_parts:]) if len(rest) > prefix_parts else ""
+    body = body if isinstance(body, dict) else {}
+    agent_id = body.get("agent_id") if isinstance(body.get("agent_id"), str) else None
+    if name == "에이전트" and ident and ident != "bulk-delete":
+        agent_id = ident
+    if ident == "bulk-delete":
+        verb = "선택 삭제"
+    elif method == "DELETE":
+        verb = "삭제" if ident else "전체 삭제"
+    elif method == "POST":
+        verb = "등록" if not ident else "처리"
+    else:
+        verb = "변경"
+    text = f"{name} {verb}"
+    if ident and name != "에이전트":
+        text += f" #{ident}"
+    fields = [_QUERY_KO.get(k, k) + (f" L{query[k]}" if k == "clearance" else
+                                   f" {query[k]}" if k in ("status", "source_ip") else "")
+              for k in sorted(query)]
+    if method == "POST" and not ident and name == "에이전트" and isinstance(body.get("clearance"), int):
+        fields.append(f"허가 등급 L{body['clearance']}")
+    for key in ("name", "action", "mode", "decision", "level", "flow"):
+        if key in body and isinstance(body[key], (str, int)) and not isinstance(body[key], bool):
+            fields.append(f"{key}={body[key]}")
+    return agent_id, text + (f" ({', '.join(fields)})" if fields else "")
+
+
+def record_admin_change(method: str, path: str, query: dict[str, str], body: Any) -> None:
+    if path.startswith(_SELF_AUDITED):
+        return
+    agent_id, text = describe_admin_change(method, path, query, body)
+    with db_tx() as conn:
+        if not path.startswith(_NOT_POLICY):
+            bump_policy_version(conn)
+        _audit(conn, "admin", "admin_api", f"{method} {path}", agent_id=agent_id, detail=text)
 
 
 # --------------------------------------------------------------------------
@@ -1825,11 +2489,15 @@ class EvaluationResult:
     risk_factors: list[str]
     security_notes: list[str]
     log_id: Optional[int]
+    mac: Optional[dict[str, Any]] = None   # STDIO: label of an allowed data-access call
 
 
 def evaluate_request(headers: dict[str, str], body: dict, *, source: str,
                       destination: str, method: str = "POST",
-                      transport: str = "http") -> EvaluationResult:
+                      transport: str = "http",
+                      mac_session: Optional[str] = None) -> EvaluationResult:
+    """mac_session is set by the STDIO proxy only: MAC then runs after the
+    request policy, and both must allow the call."""
     headers = {k.lower(): v for k, v in headers.items()}
     body_method = body.get("method") if isinstance(body.get("method"), str) else None
     body_params = body.get("params") if isinstance(body.get("params"), dict) else {}
@@ -1853,6 +2521,9 @@ def evaluate_request(headers: dict[str, str], body: dict, *, source: str,
             policy = PolicyDecision("DENY", None, "unknown protocol (default deny)")
         else:
             policy = evaluate_policy(agent["agent_id"], insp.target, insp.tool)
+        mac: Optional[MacDecision] = None
+        if mac_session:   # STDIO: trust gate -> policy -> MAC -> trust restriction
+            policy, mac = _stdio_zero_trust(agent, mac_session, insp, findings, risk.score, policy)
     except Exception as exc:  # noqa: BLE001 - fail closed on any engine bug, never crash the proxy
         write_event(agent["agent_id"], "ENGINE_ERROR", "high", destination, 0, str(exc))
         log_id = write_log(agent["agent_id"], None, source, destination, method, destination, "",
@@ -1862,7 +2533,13 @@ def evaluate_request(headers: dict[str, str], body: dict, *, source: str,
 
     for note in findings.notes:
         severity = DETECTION_RULES.get(note, {}).get("severity", "medium")
-        write_event(agent["agent_id"], note, severity, insp.target, risk.score, "; ".join(risk.factors))
+        if mac and note == mac.finding:
+            reason = mac.reason
+        elif note in ("TRUST_QUARANTINED", "TRUST_RESTRICTED_DENY"):
+            reason = policy.reason
+        else:
+            reason = "; ".join(risk.factors)
+        write_event(agent["agent_id"], note, severity, insp.target, risk.score, reason)
 
     log_id = write_log(
         agent["agent_id"], insp.protocol, source, destination, method, insp.target, insp.tool,
@@ -1872,7 +2549,8 @@ def evaluate_request(headers: dict[str, str], body: dict, *, source: str,
         component=insp.component or None, object_name=insp.object_name or None,
         findings=findings.notes,
     )
-    return EvaluationResult(policy.action, policy.reason, risk.score, risk.factors, findings.notes, log_id)
+    return EvaluationResult(policy.action, policy.reason, risk.score, risk.factors, findings.notes, log_id,
+                            mac.context if mac and mac.allowed else None)
 
 
 # --------------------------------------------------------------------------
@@ -2027,7 +2705,7 @@ try:
         def request(self, flow: "_mitm_http.HTTPFlow") -> None:
             flow.metadata["nac_forwarded"] = False
             if flow.request.method == "CONNECT":
-                return  # TLS tunnel setup, not an inspectable AI-NAC request
+                return  # TLS tunnel setup, not an inspectable MayAI request
 
             request_body = _parse_body(flow)
             headers = {k.lower(): v for k, v in flow.request.headers.items()}
@@ -2049,7 +2727,7 @@ try:
                     pass
                 flow.response = _mitm_http.Response.make(
                     403,
-                    json.dumps({"error": "AI-NAC: access denied",
+                    json.dumps({"error": "MayAI: access denied",
                                 "reason": f"engine error (fail-closed): {exc}"}).encode(),
                     {"Content-Type": "application/json"},
                 )
@@ -2060,7 +2738,7 @@ try:
                 destination=destination, http_method=flow.request.method, transport="http",
             )
 
-            # AI-NAC's own auth headers must never reach the external destination.
+            # MayAI's own auth headers must never reach the external destination.
             flow.request.headers.pop("X-Agent-Token", None)
             flow.request.headers.pop("X-Agent-ID", None)
 
@@ -2073,7 +2751,7 @@ try:
             if result.decision != "ALLOW":  # only an explicit ALLOW is forwarded
                 flow.response = _mitm_http.Response.make(
                     403,
-                    json.dumps({"error": "AI-NAC: access denied", "reason": result.reason}).encode(),
+                    json.dumps({"error": "MayAI: access denied", "reason": result.reason}).encode(),
                     {"Content-Type": "application/json"},
                 )
 
@@ -2146,6 +2824,17 @@ DETECTION_RULES: dict[str, dict[str, Any]] = {
                                "description": "tools/call 인자가 tools/list로 등록된 inputSchema와 불일치"},
     "ENGINE_ERROR": {"label": "엔진 오류 (안전 차단)", "severity": "high",
                      "description": "검사 엔진 오류로 안전하게 차단된 요청"},
+    "MAC_READ_UP_DENY": {"label": "MAC 상위 등급 접근 차단", "severity": "high",
+                         "description": "에이전트 허가 등급보다 높은 등급의 도구·리소스·프롬프트 접근", "transports": ["stdio"]},
+    "MAC_WRITE_DOWN_DENY": {"label": "MAC 하위 등급 유출 차단", "severity": "high",
+                            "description": "높은 등급 데이터를 받은 세션이 낮은 등급 대상으로 쓰기·외부 전송 시도",
+                            "transports": ["stdio"]},
+    "TRUST_QUARANTINED": {"label": "격리된 에이전트 차단", "severity": "high",
+                          "description": "COMPROMISED·RECOVERY 상태이거나 폐기된 세션의 요청 (재인증해도 해제되지 않음)",
+                          "transports": ["stdio"]},
+    "TRUST_RESTRICTED_DENY": {"label": "신뢰 하락으로 권한 축소", "severity": "medium",
+                              "description": "SUSPICIOUS·관찰 중 에이전트의 쓰기·외부 전송 또는 높은 등급 읽기",
+                              "transports": ["stdio"]},
     "REQUEST_SENSITIVE_PATH": {"label": "민감 경로 접근 요청", "severity": "high",
                                "description": "도구 인자나 리소스 URI가 SSH 키, 클라우드 자격 증명, .env 같은 민감 경로를 가리킴"},
     "REQUEST_DANGEROUS_COMMAND": {"label": "위험 명령 요청", "severity": "high",
@@ -2215,6 +2904,7 @@ DETECTION_RULES: dict[str, dict[str, Any]] = {
                      "description": "같은 응답에서 규칙 의심과 ML 의심이 함께 발생"},
 }
 
+_MAC_FINDINGS = ["MAC_READ_UP_DENY", "MAC_WRITE_DOWN_DENY", "TRUST_RESTRICTED_DENY"]
 _REQUEST_COMMON = ["POLICY_DENY", "SENSITIVE_DATA_EXPOSURE", "PERMISSION_ABUSE", "ENGINE_ERROR"]
 _RESPONSE_COMMON = ["RESPONSE_POLICY_DENY", "RESPONSE_SENSITIVE_DATA", "JSONRPC_ID_MISMATCH",
                     "INVALID_JSON_RESPONSE", "UNEXPECTED_CONTENT_TYPE", "RESPONSE_STREAMING_SKIPPED",
@@ -2223,9 +2913,11 @@ _ML_COMMON = ["ML_SUSPICIOUS_CONTENT", "ML_INSPECTION_UNAVAILABLE", "ML_UNSUPPOR
               "ML_PARTIAL_INSPECTION", *RULE_HIGH_FINDINGS, RULE_MEDIUM, RULE_CONFIRMED]
 # direction -> method -> detections specific to that method ("*" = every method)
 RULE_MAP: dict[str, dict[str, list[str]]] = {
-    "request": {"*": _REQUEST_COMMON,
-                "tools/call": ["INPUT_SCHEMA_VIOLATION", "REQUEST_SENSITIVE_PATH", "REQUEST_DANGEROUS_COMMAND"],
-                "resources/read": ["REQUEST_SENSITIVE_PATH"]},
+    "request": {"*": [*_REQUEST_COMMON, "TRUST_QUARANTINED"],
+                "tools/call": ["INPUT_SCHEMA_VIOLATION", "REQUEST_SENSITIVE_PATH", "REQUEST_DANGEROUS_COMMAND",
+                               *_MAC_FINDINGS],
+                "resources/read": ["REQUEST_SENSITIVE_PATH", *_MAC_FINDINGS],
+                "prompts/get": _MAC_FINDINGS},
     "response": {
         "*": _RESPONSE_COMMON,
         "tools/list": ["TOOL_DEFINITION_CHANGED", "TOOL_DEFINITION_INJECTION", *_ML_COMMON],
@@ -2253,8 +2945,8 @@ def rule_catalog() -> dict[str, Any]:
         for component in ("resource", "prompt"):
             methods[direction][component].append("completion/complete")
     return {
-        "transports": {"http": "HTTP (mitmproxy)", "stdio": "STDIO proxy"},
-        "components": {"tool": "Tool", "resource": "Resource", "prompt": "Prompt"},
+        "transports": {"http": "HTTP (mitmproxy)", "stdio": "STDIO 프록시"},
+        "components": {"tool": "도구 (Tool)", "resource": "리소스 (Resource)", "prompt": "프롬프트 (Prompt)"},
         "directions": {"request": "요청 (에이전트 → 서버)",
                        "response": "응답 (서버 → 에이전트)",
                        "inbound": "서버 알림 (STDIO 전용)"},
@@ -2347,10 +3039,13 @@ JSONRPC_ACCESS_DENIED = -32003
 
 class StdioProxy:
     def __init__(self, command: list[str], server_name: str, agent_id: str, token: str,
-                 client_in: Any = None, client_out: Any = None) -> None:
+                 client_in: Any = None, client_out: Any = None,
+                 mac_session: Optional[str] = None) -> None:
         self.command = command
         self.destination = canonical_target(f"stdio:{server_name}")
         self.agent_id = agent_id
+        # Zero trust: every STDIO proxy of one agent run shares a MAC session.
+        self.mac_session = mac_session or mac_session_id(agent_id)
         self.headers = {"X-Agent-ID": agent_id, "X-Agent-Token": token}
         self.client_in = client_in if client_in is not None else sys.stdin.buffer
         self.client_out = client_out if client_out is not None else sys.stdout.buffer
@@ -2375,7 +3070,7 @@ class StdioProxy:
     def _deny_client(self, message_id: Any, reason: str) -> None:
         self._send_client(json.dumps({
             "jsonrpc": "2.0", "id": message_id,
-            "error": {"code": JSONRPC_ACCESS_DENIED, "message": "AI-NAC: access denied",
+            "error": {"code": JSONRPC_ACCESS_DENIED, "message": "MayAI: access denied",
                       "data": {"reason": reason}},
         }, ensure_ascii=False).encode("utf-8"))
 
@@ -2402,7 +3097,7 @@ class StdioProxy:
         try:
             result = evaluate_request(self.headers, message, source=STDIO_SOURCE_IP,
                                       destination=self.destination, method="STDIO",
-                                      transport="stdio")
+                                      transport="stdio", mac_session=self.mac_session)
         except Exception as exc:  # noqa: BLE001 - fail closed, same as the HTTP addon
             try:
                 write_event(self.agent_id, "ENGINE_ERROR", "high", self.destination, 0, str(exc))
@@ -2420,6 +3115,7 @@ class StdioProxy:
             context = request_context(result, message, agent_id=self.agent_id,
                                       destination=self.destination, http_method="STDIO",
                                       transport="stdio")
+            context["mac"] = result.mac
             with self._pending_lock:
                 self._pending[self._id_key(message["id"])] = context
         self._send_server(raw)
@@ -2451,6 +3147,7 @@ class StdioProxy:
         if context is None:
             self._send_client(raw)
             return
+        outcome = None
         try:
             outcome = process_response(context, status_code=200,
                                        content_type="application/json", body=raw)
@@ -2462,6 +3159,32 @@ class StdioProxy:
                             f"request_log_id={context.get('request_log_id')}; {exc}")
             except Exception:
                 pass
+        # Zero trust: re-check the agent before the data reaches it.
+        try:
+            withheld = trust_after_response(self.agent_id, self.mac_session,
+                                            outcome.inspection.findings if outcome else [])
+        except Exception as exc:  # noqa: BLE001 - trust store unavailable: fail closed
+            withheld = f"trust state unavailable (fail-closed): {exc}"
+            try:
+                write_event(self.agent_id, "ENGINE_ERROR", "high", self.destination, 0, withheld)
+            except Exception:
+                pass
+        if withheld:
+            self._deny_client(message.get("id"), withheld)
+            return
+        # MAC: data the agent actually receives raises its session level.
+        delivered = (outcome is None or outcome.effective_action != "DENY") and "error" not in message
+        if delivered and context.get("mac"):
+            try:
+                mac_record_access(context["mac"], outcome.inspection.findings if outcome else [])
+            except Exception as exc:  # noqa: BLE001 - an untracked flow must not slip through
+                try:
+                    write_event(self.agent_id, "ENGINE_ERROR", "high", self.destination, 0,
+                                f"MAC session update failed (fail-closed): {exc}")
+                except Exception:
+                    pass
+                self._deny_client(message.get("id"), "MAC session update failed (fail-closed)")
+                return
         self._send_client(raw)
 
     def _pump_client(self) -> None:
@@ -2487,7 +3210,7 @@ class StdioProxy:
         import subprocess
 
         env = dict(os.environ)
-        # AI-NAC's own credentials must never reach the MCP server.
+        # MayAI's own credentials must never reach the MCP server.
         env.pop("MAYAI_AGENT_TOKEN", None)
         env.pop("MAYAI_AGENT_ID", None)
         # stderr is inherited: MCP servers log there and clients show it.
@@ -2511,7 +3234,7 @@ def run_stdio_cli(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(
         prog="MayAI.py stdio",
-        description="AI-NAC STDIO proxy: launch an MCP server behind the AI-NAC pipeline. "
+        description="MayAI STDIO proxy: launch an MCP server behind the MayAI pipeline. "
                     "Credentials come from MAYAI_AGENT_ID / MAYAI_AGENT_TOKEN.",
     )
     parser.add_argument("--server-name", help="policy target becomes stdio:<name> "
@@ -2539,7 +3262,44 @@ def build_api():
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel, ConfigDict, field_validator
 
-    app = FastAPI(title="AI-NAC Security Gateway")
+    app = FastAPI(title="MayAI Security Gateway")
+
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    generated_key = ensure_admin_key()
+    if generated_key:
+        print("=" * 64 + "\n MayAI 관리자 키 (이번 한 번만 표시됩니다): " + generated_key +
+              "\n 대시보드에서 변경 작업을 할 때 입력하세요. 고정하려면 서버 실행 전"
+              "\n MAYAI_ADMIN_KEY 환경변수로 지정하세요.\n" + "=" * 64, flush=True)
+
+    _MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
+
+    @app.middleware("http")
+    async def admin_guard(request: Request, call_next):
+        """Every state-changing /api call needs X-Admin-Key and lands in the audit log."""
+        path = request.url.path
+        guarded = path.startswith("/api/") and request.method in _MUTATING
+        if guarded:
+            try:
+                ok = admin_key_valid(request.headers.get("x-admin-key", ""))
+            except Exception:  # noqa: BLE001 - key store unreadable: fail closed
+                ok = False
+            if not ok:
+                return JSONResponse({"detail": "admin key required (X-Admin-Key)"}, status_code=401)
+        body: Any = None
+        if guarded and request.headers.get("content-type", "").startswith("application/json"):
+            try:
+                body = json.loads(await request.body() or b"null")   # Starlette caches it for the route
+            except ValueError:
+                body = None
+        response = await call_next(request)
+        if guarded and response.status_code < 400:
+            try:
+                record_admin_change(request.method, path, dict(request.query_params), body)
+            except Exception as exc:  # noqa: BLE001 - the change itself already committed
+                write_event(None, "AUDIT_WRITE_FAILED", "high", None, 0, f"{request.method} {path}: {exc}")
+        return response
 
     # Dashboard (section 20): one static HTML file, no build step, talks to the
     # /api endpoints below. ponytail: a Vite/React SPA is a toolchain to
@@ -2561,6 +3321,14 @@ def build_api():
         description: str = ""
         token: str
         source_ip: str
+        clearance: int = MAC_DEFAULT_CLEARANCE
+
+        @field_validator("clearance")
+        @classmethod
+        def validate_clearance(cls, value: int) -> int:
+            if value not in MAC_LEVELS:
+                raise ValueError("clearance must be 1..4")
+            return value
 
         @field_validator("source_ip")
         @classmethod
@@ -2576,7 +3344,6 @@ def build_api():
         target: str = "*"
         tool: str = "*"
         action: Literal["ALLOW", "DENY"]
-        priority: int = 100
         enabled: bool = True
         description: str = ""
 
@@ -2599,7 +3366,6 @@ def build_api():
         tool: str = "*"
         finding: str = "*"
         action: Literal["ALLOW", "DENY"]
-        priority: int = 100
         enabled: bool = True
         description: str = ""
 
@@ -2619,6 +3385,41 @@ def build_api():
             if value != "*" and value not in SUPPORTED_RESPONSE_FINDINGS:
                 allowed = ", ".join(sorted(SUPPORTED_RESPONSE_FINDINGS))
                 raise ValueError(f"finding must be * or one of: {allowed}")
+            return value
+
+    class MacLabelIn(BaseModel):
+        name: str
+        target: str = "*"
+        object_pattern: str = "*"
+        level: int
+        flow: Literal["read", "write", "egress"] = "read"
+        description: str = ""
+
+        @field_validator("target")
+        @classmethod
+        def validate_target(cls, value: str) -> str:
+            if value == "*":
+                return value
+            if not value.strip().lower().startswith("stdio:"):
+                raise ValueError("MAC labels apply to STDIO servers: use stdio:<server-name> or *")
+            try:
+                return canonical_target(value)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+
+        @field_validator("object_pattern")
+        @classmethod
+        def validate_object(cls, value: str) -> str:
+            value = value.strip()
+            if not value:
+                raise ValueError("object_pattern is required (use * for every object)")
+            return value
+
+        @field_validator("level")
+        @classmethod
+        def validate_level(cls, value: int) -> int:
+            if value not in MAC_LEVELS:
+                raise ValueError("level must be 1..4")
             return value
 
     class DecisionIn(BaseModel):
@@ -2684,10 +3485,10 @@ def build_api():
         with db() as conn:
             conn.execute(
                 "INSERT INTO agents (agent_id, agent_name, description, token_hash, status,"
-                " source_ip, created_at, updated_at)"
-                " VALUES (?,?,?,?, 'active', ?,?,?)",
+                " source_ip, clearance, created_at, updated_at)"
+                " VALUES (?,?,?,?, 'active', ?,?,?,?)",
                 (a.agent_id, a.agent_name, a.description, hash_token(a.token),
-                 a.source_ip, _now(), _now()),
+                 a.source_ip, a.clearance, _now(), _now()),
             )
         return {"status": "created", "agent_id": a.agent_id}
 
@@ -2695,7 +3496,7 @@ def build_api():
     def list_agents():
         with db() as conn:
             rows = conn.execute("SELECT agent_id, agent_name, description, status, source_ip,"
-                                 " created_at, updated_at,"
+                                 " clearance, created_at, updated_at,"
                                  " (token_hash != '') AS has_token FROM agents").fetchall()
         return [dict(r) for r in rows]
 
@@ -2717,7 +3518,7 @@ def build_api():
     def get_agent(agent_id: str):
         with db() as conn:
             row = conn.execute("SELECT agent_id, agent_name, description, status, source_ip,"
-                               " created_at, updated_at FROM agents WHERE agent_id=?",
+                               " clearance, created_at, updated_at FROM agents WHERE agent_id=?",
                                (agent_id,)).fetchone()
         if not row:
             raise HTTPException(404, "agent not found")
@@ -2725,9 +3526,12 @@ def build_api():
 
     @app.put("/api/agents/{agent_id}")
     def update_agent(agent_id: str, status: str | None = None, source_ip: str | None = None,
-                     token: str | None = None, allowed_targets: str | None = None):
+                     token: str | None = None, allowed_targets: str | None = None,
+                     clearance: int | None = None):
         if allowed_targets is not None:
             raise HTTPException(422, "allowed_targets has been removed; use policy target")
+        if clearance is not None and clearance not in MAC_LEVELS:
+            raise HTTPException(422, "clearance must be 1..4")
         if source_ip is not None:
             try:
                 source_ip = normalize_ipv4(source_ip)
@@ -2742,6 +3546,9 @@ def build_api():
             if source_ip is not None:
                 conn.execute("UPDATE agents SET source_ip=?, updated_at=? WHERE agent_id=?",
                              (source_ip, _now(), agent_id))
+            if clearance is not None:
+                conn.execute("UPDATE agents SET clearance=?, updated_at=? WHERE agent_id=?",
+                             (clearance, _now(), agent_id))
             if token:  # reissue: store only the new hash, plaintext is never kept
                 conn.execute("UPDATE agents SET token_hash=?, updated_at=? WHERE agent_id=?",
                              (hash_token(token), _now(), agent_id))
@@ -2754,6 +3561,199 @@ def build_api():
             if cur.rowcount == 0:
                 raise HTTPException(404, "agent not found")
         return {"status": "deleted", "agent_id": agent_id, "deleted_count": cur.rowcount}
+
+    # ---- MAC (STDIO zero trust): object labels and live sessions ----
+    @app.get("/api/mac/levels")
+    def mac_levels():
+        return {"levels": MAC_LEVELS, "flows": list(MAC_FLOWS), "default_clearance": MAC_DEFAULT_CLEARANCE,
+                "unlabeled_level": MAC_UNLABELED_LEVEL, "methods": sorted(MAC_METHODS)}
+
+    @app.get("/api/mac/labels")
+    def list_mac_labels():
+        with db() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM mac_labels ORDER BY label_id")]
+
+    @app.post("/api/mac/labels")
+    def create_mac_label(label: MacLabelIn):
+        with db() as conn:
+            cur = conn.execute(
+                "INSERT INTO mac_labels (name, target, object_pattern, level, flow, description,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (label.name, label.target, label.object_pattern, label.level, label.flow,
+                 label.description, _now(), _now()))
+        return {"status": "created", "label_id": cur.lastrowid}
+
+    @app.put("/api/mac/labels/{label_id}")
+    def update_mac_label(label_id: int, label: MacLabelIn):
+        with db() as conn:
+            cur = conn.execute(
+                "UPDATE mac_labels SET name=?, target=?, object_pattern=?, level=?, flow=?,"
+                " description=?, updated_at=? WHERE label_id=?",
+                (label.name, label.target, label.object_pattern, label.level, label.flow,
+                 label.description, _now(), label_id))
+            if cur.rowcount == 0:
+                raise HTTPException(404, "MAC label not found")
+        return {"status": "updated"}
+
+    @app.delete("/api/mac/labels/{label_id}")
+    def delete_mac_label(label_id: int):
+        with db() as conn:
+            cur = conn.execute("DELETE FROM mac_labels WHERE label_id=?", (label_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(404, "MAC label not found")
+        return {"status": "deleted", "label_id": label_id}
+
+    @app.get("/api/mac/sessions")
+    def list_mac_sessions():
+        with db() as conn:
+            rows = conn.execute(
+                "SELECT s.*, a.clearance FROM mac_sessions s LEFT JOIN agents a USING (agent_id)"
+                " ORDER BY s.updated_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    @app.post("/api/mac/sessions/{session_id}/reset")
+    def reset_mac_session(session_id: str):
+        """Resets the session's data level only. The agent's trust state is
+        untouched, and a revoked session stays revoked."""
+        with db_tx() as conn:
+            row = conn.execute("SELECT agent_id, level FROM mac_sessions WHERE session_id=?",
+                               (session_id,)).fetchone()
+            if row is None:
+                raise HTTPException(404, "MAC session not found")
+            conn.execute(
+                "UPDATE mac_sessions SET level=?, raised_by=NULL, updated_at=? WHERE session_id=?",
+                (MAC_BASE_LEVEL, _now(), session_id))
+            _audit(conn, "admin", "session", "SESSION_LEVEL_RESET", agent_id=row["agent_id"],
+                   detail=f"{session_id}: L{row['level']} -> L{MAC_BASE_LEVEL} (trust state unchanged)")
+        write_event(row["agent_id"], "MAC_SESSION_RESET", "low", None, 0,
+                    f"operator reset session {session_id} to L{MAC_BASE_LEVEL}")
+        return {"status": "reset", "session_id": session_id, "level": MAC_BASE_LEVEL}
+
+    # ---- agent trust (STDIO zero trust) ----
+    class TrustActionIn(BaseModel):
+        approver: str
+        reason: str = ""
+
+    class RecoveryRequestIn(BaseModel):
+        approver: str
+        cause_resolved: bool
+        note: str
+
+    class RecoveryApproveIn(BaseModel):
+        approver: str
+        note: str = ""
+        accept_unverified_integrity: bool = False
+
+    class TrustSettingsIn(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        trust_suspicious_after: int
+        trust_compromised_after: int
+        trust_compromised_exfil_after: int
+        trust_restricted_max_level: int
+
+        @field_validator("trust_suspicious_after", "trust_compromised_after", "trust_compromised_exfil_after")
+        @classmethod
+        def validate_count(cls, value: int) -> int:
+            if value < 1:
+                raise ValueError("threshold must be >= 1")
+            return value
+
+        @field_validator("trust_restricted_max_level")
+        @classmethod
+        def validate_level(cls, value: int) -> int:
+            if value not in MAC_LEVELS:
+                raise ValueError("level must be 1..4")
+            return value
+
+    def run_trust(action, *args):
+        try:
+            action(*args)
+        except TrustError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        with db() as conn:
+            return dict(conn.execute("SELECT * FROM agent_trust WHERE agent_id=?", (args[0],)).fetchone())
+
+    @app.get("/api/admin/verify")
+    def verify_admin_key(request: Request):
+        """Lets the dashboard check a key before storing it (read-only, not audited)."""
+        try:
+            return {"valid": admin_key_valid(request.headers.get("x-admin-key", ""))}
+        except Exception:  # noqa: BLE001
+            return {"valid": False}
+
+    @app.get("/api/trust/settings")
+    def get_trust_settings():
+        with db() as conn:
+            return trust_settings(conn)
+
+    @app.put("/api/trust/settings")
+    def put_trust_settings(body: TrustSettingsIn):
+        """Saves only real changes; an unchanged save leaves no audit row."""
+        values = body.model_dump()
+        with db_tx() as conn:
+            current = trust_settings(conn)
+            changed = {k: v for k, v in values.items() if current[k] != v}
+            for key, value in changed.items():
+                conn.execute("INSERT INTO settings (setting_key, value, updated_at) VALUES (?,?,?)"
+                             " ON CONFLICT(setting_key) DO UPDATE SET value=excluded.value,"
+                             " updated_at=excluded.updated_at", (key, str(value), _now()))
+            if changed:
+                bump_policy_version(conn)
+                _audit(conn, "admin", "trust", "SETTINGS_CHANGED",
+                       detail=", ".join(f"{k}: {current[k]} -> {v}" for k, v in changed.items()))
+            return {**trust_settings(conn), "changed": sorted(changed)}
+
+    @app.get("/api/trust")
+    def list_trust():
+        """Every agent with its persistent trust state and its sessions."""
+        with db() as conn:
+            agents = {r["agent_id"]: dict(r) for r in conn.execute(
+                "SELECT agent_id, agent_name, status AS agent_status, clearance FROM agents")}
+            trust = {r["agent_id"]: dict(r) for r in conn.execute("SELECT * FROM agent_trust")}
+            sessions: dict[str, list] = {}
+            for r in conn.execute("SELECT session_id, agent_id, level, revoked, revoked_reason, created_at,"
+                                  " updated_at FROM mac_sessions ORDER BY updated_at DESC"):
+                sessions.setdefault(r["agent_id"], []).append(dict(r))
+        out = []
+        for agent_id in sorted(set(agents) | set(trust)):
+            row = {"agent_id": agent_id, "trust_status": "NORMAL", "recovery_status": "NONE",
+                   "registered": agent_id in agents, "evaluated": agent_id in trust,
+                   **trust.get(agent_id, {}), **agents.get(agent_id, {})}
+            row["mac_clearance"] = row.pop("clearance", None)
+            row.pop("revoked_token_hash", None)
+            row["sessions"] = sessions.get(agent_id, [])
+            out.append(row)
+        return out
+
+    @app.post("/api/trust/{agent_id}/quarantine")
+    def quarantine_agent(agent_id: str, body: TrustActionIn):
+        return run_trust(trust_quarantine, agent_id, body.approver, body.reason)
+
+    @app.post("/api/trust/{agent_id}/recovery-request")
+    def request_recovery(agent_id: str, body: RecoveryRequestIn):
+        return run_trust(trust_request_recovery, agent_id, body.approver, body.cause_resolved, body.note)
+
+    @app.post("/api/trust/{agent_id}/recovery-approve")
+    def approve_recovery(agent_id: str, body: RecoveryApproveIn):
+        return run_trust(trust_approve_recovery, agent_id, body.approver, body.note,
+                         body.accept_unverified_integrity)
+
+    @app.post("/api/trust/{agent_id}/verify")
+    def verify_agent(agent_id: str, body: TrustActionIn):
+        return run_trust(trust_verify, agent_id, body.approver, body.reason)
+
+    @app.get("/api/audit")
+    def list_audit(limit: int = 200, category: str | None = None, agent_id: str | None = None):
+        sql, args = "SELECT * FROM audit_log WHERE 1=1", []
+        if category:
+            sql, args = sql + " AND category=?", [*args, category]
+        if agent_id:
+            sql, args = sql + " AND agent_id=?", [*args, agent_id]
+        with db() as conn:
+            rows = conn.execute(sql + " ORDER BY audit_id DESC LIMIT ?", (*args, max(1, min(limit, 1000))))
+            rows = [dict(r) for r in rows]
+        return {"chain": verify_audit_chain(), "rows": rows}
 
     @app.get("/api/policies")
     def list_policies():
@@ -2786,9 +3786,9 @@ def build_api():
     def create_policy(p: PolicyIn):
         with db() as conn:
             cur = conn.execute(
-                "INSERT INTO policies (name, agent_id, target, tool, action, priority,"
-                " enabled, description, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (p.name, p.agent_id, p.target, p.tool, p.action, p.priority,
+                "INSERT INTO policies (name, agent_id, target, tool, action,"
+                " enabled, description, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (p.name, p.agent_id, p.target, p.tool, p.action,
                  int(p.enabled), p.description, _now(), _now()),
             )
         return {"status": "created", "policy_id": cur.lastrowid}
@@ -2801,8 +3801,8 @@ def build_api():
                 raise HTTPException(404, "policy not found")
             conn.execute(
                 "UPDATE policies SET name=?, agent_id=?, target=?, tool=?, action=?,"
-                " priority=?, enabled=?, description=?, updated_at=? WHERE policy_id=?",
-                (p.name, p.agent_id, p.target, p.tool, p.action, p.priority,
+                " enabled=?, description=?, updated_at=? WHERE policy_id=?",
+                (p.name, p.agent_id, p.target, p.tool, p.action,
                  int(p.enabled), p.description, _now(), policy_id),
             )
         return {"status": "updated"}
@@ -2858,10 +3858,10 @@ def build_api():
         with db() as conn:
             cur = conn.execute(
                 "INSERT INTO response_policies (name, agent_id, target, tool, finding,"
-                " action, priority, enabled, description, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                " action, enabled, description, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (policy.name, policy.agent_id, policy.target, policy.tool,
-                 policy.finding, policy.action, policy.priority, int(policy.enabled),
+                 policy.finding, policy.action, int(policy.enabled),
                  policy.description, _now(), _now()),
             )
         return {"status": "created", "response_policy_id": cur.lastrowid}
@@ -2877,10 +3877,10 @@ def build_api():
                 raise HTTPException(404, "response policy not found")
             conn.execute(
                 "UPDATE response_policies SET name=?, agent_id=?, target=?, tool=?,"
-                " finding=?, action=?, priority=?, enabled=?, description=?, updated_at=?"
+                " finding=?, action=?, enabled=?, description=?, updated_at=?"
                 " WHERE response_policy_id=?",
                 (policy.name, policy.agent_id, policy.target, policy.tool,
-                 policy.finding, policy.action, policy.priority, int(policy.enabled),
+                 policy.finding, policy.action, int(policy.enabled),
                  policy.description, _now(), response_policy_id),
             )
         return {"status": "updated"}
@@ -3004,8 +4004,8 @@ def build_api():
             reason = decision.reason or f"operator {action.lower()} from response {response_id}"
             cur = conn.execute(
                 "INSERT INTO response_policies (name, agent_id, target, tool, finding,"
-                " action, priority, enabled, description, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,10,1,?,?,?)",
+                " action, enabled, description, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,1,?,?,?)",
                 (f"response-decision-{response_id}-{decision.finding.lower()}",
                  row["agent_id"] or "*", row["destination"] or "*",
                  row["tool"] or "*", decision.finding,
@@ -3043,8 +4043,8 @@ def build_api():
             conn.execute("UPDATE logs SET decision=?, reason=? WHERE log_id=?",
                          (action, d.reason or "admin decision", request_id))
             conn.execute(
-                "INSERT INTO policies (name, agent_id, target, tool, action, priority,"
-                " enabled, description, created_at, updated_at) VALUES (?,?,?,?,?,10,1,?,?,?)",
+                "INSERT INTO policies (name, agent_id, target, tool, action,"
+                " enabled, description, created_at, updated_at) VALUES (?,?,?,?,?,1,?,?,?)",
                 (f"admin-decision-{request_id}", log_row["agent_id"],
                  log_row["target"] or "*", log_row["tool"] or "*", action, d.reason, _now(), _now()),
             )
@@ -3153,9 +4153,9 @@ def _selftest() -> None:
     # Add explicit ALLOW policy -> ALLOW
     with db() as conn:
         conn.execute(
-            "INSERT INTO policies (name, agent_id, target, tool, action, priority, enabled,"
+            "INSERT INTO policies (name, agent_id, target, tool, action, enabled,"
             " description, created_at, updated_at) VALUES ('allow-search','agent-001','mcp-search:443',"
-            " 'search','ALLOW',10,1,'','{0}','{0}')".format(_now())
+            " 'search','ALLOW',1,'','{0}','{0}')".format(_now())
         )
     r = evaluate_request(headers, mcp_body, source=source_ip, destination="mcp-search:443")
     assert r.decision == "ALLOW", r
@@ -3164,16 +4164,16 @@ def _selftest() -> None:
     r = evaluate_request(headers, mcp_body, source="192.0.2.11", destination="mcp-search:443")
     assert r.decision == "DENY" and "source IP mismatch" in r.reason, r
 
-    # Explicit DENY beats a broader ALLOW (priority rule #1: explicit deny wins)
+    # Explicit DENY beats a broader ALLOW (rule #1: explicit deny wins)
     with db() as conn:
         conn.execute(
-            "INSERT INTO policies (name, agent_id, target, tool, action, priority, enabled,"
+            "INSERT INTO policies (name, agent_id, target, tool, action, enabled,"
             " description, created_at, updated_at) VALUES ('deny-write','agent-001','mcp-file:443',"
-            " 'file_write','DENY',10,1,'','{0}','{0}')".format(_now())
+            " 'file_write','DENY',1,'','{0}','{0}')".format(_now())
         )
         conn.execute(
-            "INSERT INTO policies (name, agent_id, target, tool, action, priority, enabled,"
-            " description, created_at, updated_at) VALUES ('allow-all','*','*','*','ALLOW',999,1,"
+            "INSERT INTO policies (name, agent_id, target, tool, action, enabled,"
+            " description, created_at, updated_at) VALUES ('allow-all','*','*','*','ALLOW',1,"
             "'','{0}','{0}')".format(_now())
         )
     write_body = {"jsonrpc": "2.0", "method": "tools/call", "server": "mcp-file",
@@ -3370,20 +4370,20 @@ def _selftest() -> None:
     )
     assert response_policy.action == "ALLOW" and response_policy.response_policy_id is None
 
-    # A broad DENY is overridden by a more specific ALLOW, regardless of priority.
+    # A broad DENY is overridden by a more specific ALLOW.
     with db() as conn:
         now = _now()
         conn.execute(
             "INSERT INTO response_policies (name, agent_id, target, tool, finding, action,"
-            " priority, enabled, description, created_at, updated_at)"
-            " VALUES ('deny-sensitive','*','*','*','RESPONSE_SENSITIVE_DATA','DENY',1,1,'',?,?)",
+            " enabled, description, created_at, updated_at)"
+            " VALUES ('deny-sensitive','*','*','*','RESPONSE_SENSITIVE_DATA','DENY',1,'',?,?)",
             (now, now),
         )
         allow_id = conn.execute(
             "INSERT INTO response_policies (name, agent_id, target, tool, finding, action,"
-            " priority, enabled, description, created_at, updated_at)"
+            " enabled, description, created_at, updated_at)"
             " VALUES ('allow-search-response','agent-001','mcp-search:443','search',"
-            " 'RESPONSE_SENSITIVE_DATA','ALLOW',999,1,'',?,?)",
+            " 'RESPONSE_SENSITIVE_DATA','ALLOW',1,'',?,?)",
             (now, now),
         ).lastrowid
     response_policy = evaluate_response_policy(
@@ -3396,9 +4396,9 @@ def _selftest() -> None:
         now = _now()
         deny_id = conn.execute(
             "INSERT INTO response_policies (name, agent_id, target, tool, finding, action,"
-            " priority, enabled, description, created_at, updated_at)"
+            " enabled, description, created_at, updated_at)"
             " VALUES ('deny-search-response','agent-001','mcp-search:443','search',"
-            " 'RESPONSE_SENSITIVE_DATA','DENY',999,1,'',?,?)",
+            " 'RESPONSE_SENSITIVE_DATA','DENY',1,'',?,?)",
             (now, now),
         ).lastrowid
     response_policy = evaluate_response_policy(
@@ -3443,7 +4443,17 @@ def _selftest() -> None:
 
     # Management API exposes runtime mode, response-policy CRUD and log decisions.
     from fastapi.testclient import TestClient
-    client = TestClient(build_api())
+    os.environ["MAYAI_ADMIN_KEY"] = "selftest-admin-key"
+    try:
+        app = build_api()
+    finally:
+        os.environ.pop("MAYAI_ADMIN_KEY", None)
+    # State-changing calls need the admin key; reads do not.
+    anonymous = TestClient(app)
+    assert anonymous.put("/api/settings/response-enforcement", json={"mode": "MONITOR"}).status_code == 401
+    assert TestClient(app, headers={"X-Admin-Key": "wrong"}).delete("/api/logs").status_code == 401
+    assert anonymous.get("/api/settings/response-enforcement").status_code == 200
+    client = TestClient(app, headers={"X-Admin-Key": "selftest-admin-key"})
     api_result = client.put(
         "/api/settings/response-enforcement", json={"mode": "MONITOR"}
     )
@@ -3476,6 +4486,7 @@ def _selftest() -> None:
         "name": "bad", "target": "stdio:bad name", "action": "ALLOW"}).status_code == 422
 
     _selftest_mcp_components(source_ip)
+    _selftest_zero_trust()
 
     os.remove(DB_PATH)
     print("nac-proxy selftest: OK (all assertions passed)")
@@ -3504,9 +4515,9 @@ def _selftest_mcp_components(source_ip: str) -> None:
     with db() as conn:
         row = conn.execute("SELECT * FROM logs WHERE log_id=?", (r.log_id,)).fetchone()
         conn.execute(
-            "INSERT INTO policies (name, agent_id, target, tool, action, priority, enabled,"
+            "INSERT INTO policies (name, agent_id, target, tool, action, enabled,"
             " description, created_at, updated_at) VALUES ('allow-docs','agent-001','mcp-docs:443',"
-            " '*','ALLOW',50,1,'',?,?)", (_now(), _now()))
+            " '*','ALLOW',1,'',?,?)", (_now(), _now()))
     assert (row["component"], row["object_name"], row["mcp_method"], row["transport"], row["direction"]) == \
         ("resource", "file:///docs/readme.md", "resources/read", "http", "outbound"), dict(row)
     r = evaluate_request(headers, read_body, source=source_ip, destination="mcp-docs:443")
@@ -3597,9 +4608,15 @@ def _selftest_mcp_components(source_ip: str) -> None:
             " '127.0.0.1', ?, ?)", (hash_token("stdio-secret"), _now(), _now()))
         for name, tool, action in (("stdio-allow", "*", "ALLOW"), ("stdio-deny-prompt", "prompts/get", "DENY")):
             conn.execute(
-                "INSERT INTO policies (name, agent_id, target, tool, action, priority, enabled,"
+                "INSERT INTO policies (name, agent_id, target, tool, action, enabled,"
                 " description, created_at, updated_at) VALUES (?, 'agent-stdio', 'stdio:docs-server',"
-                " ?, ?, 10, 1, '', ?, ?)", (name, tool, action, _now(), _now()))
+                " ?, ?, 1, '', ?, ?)", (name, tool, action, _now(), _now()))
+        # MAC zero trust: an unlabeled STDIO object counts as Critical, so the
+        # docs server needs a label within the agent's default clearance (L2).
+        conn.execute(
+            "INSERT INTO mac_labels (name, target, object_pattern, level, flow, description,"
+            " created_at, updated_at) VALUES ('docs','stdio:docs-server','*',2,'read','',?,?)",
+            (_now(), _now()))
     server = (
         "import json, os, sys\n"
         "for line in sys.stdin:\n"
@@ -3657,9 +4674,9 @@ def _selftest_mcp_components(source_ip: str) -> None:
     with db() as conn:
         conn.execute("UPDATE settings SET value='ENFORCE' WHERE setting_key='response_enforcement_mode'")
         conn.execute(
-            "INSERT INTO response_policies (name, agent_id, target, tool, finding, action, priority,"
+            "INSERT INTO response_policies (name, agent_id, target, tool, finding, action,"
             " enabled, description, created_at, updated_at) VALUES ('block-leak','*','stdio:docs-server',"
-            " '*','RESPONSE_SENSITIVE_DATA','DENY',10,1,'',?,?)", (_now(), _now()))
+            " '*','RESPONSE_SENSITIVE_DATA','DENY',1,'',?,?)", (_now(), _now()))
     client_out = io.BytesIO()
     StdioProxy([sys.executable, "-c", server], "docs-server", "agent-stdio", "stdio-secret",
                io.BytesIO(json.dumps(lines[2]).encode() + b"\n"), client_out).run()
@@ -3667,6 +4684,8 @@ def _selftest_mcp_components(source_ip: str) -> None:
     assert blocked["error"]["code"] == -32003 and blocked["id"] == 2, blocked
     with db() as conn:
         conn.execute("UPDATE settings SET value='MONITOR' WHERE setting_key='response_enforcement_mode'")
+
+    _selftest_mac()
 
     # Explorer: transport -> component -> direction -> method -> detection.
     catalog = rule_catalog()
@@ -3688,6 +4707,399 @@ def _selftest_mcp_components(source_ip: str) -> None:
                              method="tools/call", rule="INPUT_SCHEMA_VIOLATION")
     assert schema["matched"] == 1 and schema["rows"][0]["object_name"] == "weather", schema
     assert explore_traffic(transport="http", direction="response", rule="PROMPT_CONTENT_CHANGED")["matched"] == 0
+    mac_hits = explore_traffic(transport="stdio", direction="request", rule="MAC_WRITE_DOWN_DENY")
+    assert mac_hits["matched"] >= 1 and all(r["verdict"] == "DENY" for r in mac_hits["rows"]), mac_hits
+
+
+def _selftest_mac() -> None:
+    """MAC over STDIO: no read up, no write down, session high-water mark,
+    shared across servers of one run, reset by re-authentication or operator."""
+    import io
+
+    with db() as conn:
+        # Pure MAC here: park the automatic trust transitions (tested separately).
+        conn.execute("UPDATE settings SET value='1000' WHERE setting_key IN ('trust_suspicious_after',"
+                     " 'trust_compromised_after', 'trust_compromised_exfil_after')")
+        conn.execute(
+            "INSERT INTO agents (agent_id, agent_name, description, token_hash, status,"
+            " source_ip, clearance, created_at, updated_at) VALUES ('agent-mac','MAC Agent','', ?,"
+            " 'active', '127.0.0.1', 2, ?, ?)", (hash_token("mac-secret"), _now(), _now()))
+        conn.execute(
+            "INSERT INTO policies (name, agent_id, target, tool, action, enabled, description,"
+            " created_at, updated_at) VALUES ('mac-allow-all','agent-mac','*','*','ALLOW',1,'',?,?)",
+            (_now(), _now()))
+        for name, target, pattern, level, flow in (
+            ("salary", "stdio:hr-db", "query_salary", 3, "read"),
+            ("files-read", "stdio:files", "read_file", 2, "read"),
+            ("files-write", "stdio:files", "write_note", 2, "write"),
+            ("slack", "stdio:slack", "send_*", 1, "egress"),
+        ):
+            conn.execute(
+                "INSERT INTO mac_labels (name, target, object_pattern, level, flow, description,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,'',?,?)",
+                (name, target, pattern, level, flow, _now(), _now()))
+
+    server = (
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    m = json.loads(line)\n"
+        "    if 'id' in m:\n"
+        "        r = {'content': [{'type': 'text', 'text': sys.argv[1]}]}\n"
+        "        print(json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': r}), flush=True)\n"
+    )
+
+    def call(server_name: str, tool: str, session: str, text: str = "ok",
+             method: str = "tools/call") -> dict:
+        params = {"name": tool, "arguments": {}} if method == "tools/call" else {}
+        request = {"jsonrpc": "2.0", "id": 7, "method": method, "params": params}
+        out = io.BytesIO()
+        StdioProxy([sys.executable, "-c", server, text], server_name, "agent-mac", "mac-secret",
+                   io.BytesIO(json.dumps(request).encode() + b"\n"), out, mac_session=session).run()
+        return [json.loads(line) for line in out.getvalue().splitlines()][0]
+
+    def level(session: str) -> int:
+        with db() as conn:
+            return conn.execute("SELECT level FROM mac_sessions WHERE session_id=?",
+                                (session,)).fetchone()["level"]
+
+    denied = lambda reply: reply.get("error", {}).get("code") == JSONRPC_ACCESS_DENIED  # noqa: E731
+    s1 = "agent-mac:run-1"
+
+    # No read up: L3 salary data is above the agent's L2 clearance.
+    reply = call("hr-db", "query_salary", s1)
+    assert denied(reply) and "above agent clearance" in reply["error"]["data"]["reason"], reply
+    # Zero trust: an unlabeled object counts as Critical (L4).
+    assert denied(call("files", "delete_everything", s1))
+    # Discovery / lifecycle carries no business data: left to policy only.
+    assert "result" in call("files", "", s1, method="tools/list")
+    # A fresh session may send L1 data out.
+    assert "result" in call("slack", "send_message", s1) and level(s1) == 1
+    # Reading L2 data raises the session (high-water mark) ...
+    assert "result" in call("files", "read_file", s1) and level(s1) == 2
+    # ... so egress to an L1 object on ANOTHER server is now a leak down.
+    reply = call("slack", "send_message", s1)
+    assert denied(reply) and "leak it down" in reply["error"]["data"]["reason"], reply
+    # Writing at the same level is fine.
+    assert "result" in call("files", "write_note", s1)
+    # Personal / secret data in a response lifts the session to Restricted (L3).
+    assert "result" in call("files", "read_file", s1, text="api_key=abc") and level(s1) == 3
+    assert denied(call("files", "write_note", s1))
+
+    # Zero trust: a new agent run (re-authentication) inherits the data level,
+    # so a restart does not wash away what the agent has already received.
+    s2 = "agent-mac:run-2"
+    assert denied(call("slack", "send_message", s2)) and level(s2) == 3
+    # An operator reset of the latest session lets the next run start at L1.
+    with db() as conn:
+        conn.execute("UPDATE mac_sessions SET level=1, updated_at=? WHERE session_id=?", (_now(), s2))
+    s3 = "agent-mac:run-3"
+    assert "result" in call("slack", "send_message", s3) and level(s3) == 1
+
+    with db() as conn:
+        events = [r["event_type"] for r in conn.execute(
+            "SELECT event_type FROM events WHERE agent_id='agent-mac'")]
+        mac_logs = conn.execute(
+            "SELECT findings FROM logs WHERE agent_id='agent-mac' AND decision='DENY'").fetchall()
+    assert {"MAC_READ_UP_DENY", "MAC_WRITE_DOWN_DENY", "MAC_LEVEL_RAISED"} <= set(events), events
+    assert all(set(json.loads(r["findings"])) & {"MAC_READ_UP_DENY", "MAC_WRITE_DOWN_DENY"}
+               for r in mac_logs), [dict(r) for r in mac_logs]
+
+    # The HTTP gateway is unchanged: no MAC session, so unlabeled targets still pass on policy.
+    r = evaluate_request({"X-Agent-ID": "agent-mac", "X-Agent-Token": "mac-secret"},
+                         {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                          "params": {"name": "query_salary", "arguments": {}}},
+                         source="127.0.0.1", destination="hr.example:443")
+    assert r.decision == "ALLOW" and r.mac is None, r
+    with db() as conn:
+        for key, value in TRUST_SETTING_DEFAULTS.items():
+            conn.execute("UPDATE settings SET value=? WHERE setting_key=?", (value, key))
+
+
+def _selftest_zero_trust() -> None:
+    """Persistent agent trust over STDIO - the ten scenarios of the zero trust
+    request. Uses the real decision point (evaluate_request with a session)
+    and the real STDIO proxy response path; no test-only switches."""
+    import io
+    import threading as _threading
+    from types import SimpleNamespace
+
+    tokens = {"zt-a": "tok-a", "zt-b": "tok-b", "zt-c": "tok-c", "zt-d": "tok-d"}
+    with db() as conn:
+        for agent_id, token in tokens.items():
+            conn.execute(
+                "INSERT INTO agents (agent_id, agent_name, description, token_hash, status, source_ip,"
+                " clearance, created_at, updated_at) VALUES (?, ?, '', ?, 'active', '127.0.0.1', 2, ?, ?)",
+                (agent_id, agent_id, hash_token(token), _now(), _now()))
+            conn.execute(
+                "INSERT INTO policies (name, agent_id, target, tool, action, enabled, description,"
+                " created_at, updated_at) VALUES (?, ?, '*', '*', 'ALLOW', 1, '', ?, ?)",
+                (f"zt-allow-{agent_id}", agent_id, _now(), _now()))
+        for target, pattern, level, flow in (("stdio:zt-files", "read_file", 2, "read"),
+                                             ("stdio:zt-files", "write_note", 2, "write"),
+                                             ("stdio:zt-db", "query", 3, "read"),
+                                             ("stdio:zt-chat", "send", 1, "egress")):
+            conn.execute(
+                "INSERT INTO mac_labels (name, target, object_pattern, level, flow, description,"
+                " created_at, updated_at) VALUES (?,?,?,?,?,'',?,?)",
+                (pattern, target, pattern, level, flow, _now(), _now()))
+
+    def req(agent, session, server, tool, args=None, *, token=None, method="tools/call"):
+        params = {"name": tool, "arguments": args or {}} if method == "tools/call" else {}
+        return evaluate_request({"X-Agent-ID": agent, "X-Agent-Token": token or tokens.get(agent, "")},
+                                {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                                source=STDIO_SOURCE_IP, destination=f"stdio:{server}", method="STDIO",
+                                transport="stdio", mac_session=session)
+
+    def trust(agent):
+        with db() as conn:
+            return dict(conn.execute("SELECT * FROM agent_trust WHERE agent_id=?", (agent,)).fetchone())
+
+    def session(session_id):
+        with db() as conn:
+            row = conn.execute("SELECT * FROM mac_sessions WHERE session_id=?", (session_id,)).fetchone()
+        return dict(row) if row else None
+
+    def refused(call, code):
+        try:
+            call()
+        except TrustError as exc:
+            assert exc.status_code == code, (exc.status_code, str(exc))
+            return str(exc)
+        raise AssertionError(f"expected TrustError {code}")
+
+    shadow = {"path": "/etc/shadow"}            # REQUEST_SENSITIVE_PATH: an agent-side violation
+    note = {"path": "notes/today.md"}
+
+    # 1. A normal agent gets a session within its MAC scope.
+    r = req("zt-a", "zt-a:run1", "zt-files", "read_file", note)
+    assert r.decision == "ALLOW" and r.mac["level"] == 2, r
+    assert trust("zt-a")["trust_status"] == "NORMAL" and session("zt-a:run1")["revoked"] == 0
+    with db() as conn:
+        assert conn.execute("SELECT 1 FROM audit_log WHERE agent_id='zt-a' AND action='SESSION_ISSUED'").fetchone()
+
+    # 6. MAC cannot be widened by trust: NORMAL or not, L3 stays above clearance L2.
+    r = req("zt-a", "zt-a:run1", "zt-db", "query")
+    assert r.decision == "DENY" and "MAC_READ_UP_DENY" in r.security_notes, r
+    assert trust("zt-a")["trust_status"] == "SUSPICIOUS"          # labeled read-up is a violation
+    trust_verify("zt-a", "tester", "operator checked: misconfigured client")
+    assert trust("zt-a")["trust_status"] == "NORMAL"
+    r = req("zt-a", "zt-a:run1", "zt-db", "query")
+    assert r.decision == "DENY" and "MAC_READ_UP_DENY" in r.security_notes, r
+    # An unlabeled object is refused (L4) but is a labeling gap, not a violation.
+    trust_verify("zt-a", "tester", "reset for next check")
+    assert req("zt-a", "zt-a:run1", "zt-files", "unknown_tool").decision == "DENY"
+    assert trust("zt-a")["trust_status"] == "NORMAL" and trust("zt-a")["violation_count"] == 0
+
+    # 5. Attack detected mid-session: restrict at once, then quarantine.
+    assert req("zt-b", "zt-b:run1", "zt-files", "read_file", note).decision == "ALLOW"
+    req("zt-b", "zt-b:run1", "zt-files", "read_file", shadow)
+    assert trust("zt-b")["trust_status"] == "SUSPICIOUS"
+    r = req("zt-b", "zt-b:run1", "zt-files", "write_note", note)
+    assert r.decision == "DENY" and "TRUST_RESTRICTED_DENY" in r.security_notes, r
+    assert req("zt-b", "zt-b:run1", "zt-files", "read_file", note).decision == "ALLOW"   # read <= L2 still ok
+    req("zt-b", "zt-b:run1", "zt-files", "read_file", shadow)
+    r = req("zt-b", "zt-b:run1", "zt-files", "read_file", shadow)     # third violation
+    assert r.decision == "DENY" and "TRUST_QUARANTINED" in r.security_notes, r
+    tb = trust("zt-b")
+    assert tb["trust_status"] == "COMPROMISED" and tb["revoked_token_hash"] == hash_token("tok-b"), tb
+    assert session("zt-b:run1")["revoked"] == 1
+    r = req("zt-b", "zt-b:run1", "zt-files", "read_file", note)
+    assert r.decision == "DENY" and "COMPROMISED" in r.reason, r
+
+    # 2. Restart + re-authentication: no session is issued.
+    r = req("zt-b", "zt-b:run2", "zt-files", "read_file", note)
+    assert r.decision == "DENY" and "re-authentication does not restore trust" in r.reason, r
+    assert req("zt-b", "zt-b:run2", "zt-files", "", method="initialize").decision == "DENY"
+    assert session("zt-b:run2") is None
+
+    # 3. Sessions expire / are reset / are wiped: the trust state survives.
+    with db() as conn:
+        conn.execute("UPDATE mac_sessions SET level=1 WHERE agent_id='zt-b'")
+        conn.execute("DELETE FROM mac_sessions WHERE agent_id='zt-b'")
+    assert req("zt-b", "zt-b:run3", "zt-files", "read_file", note).decision == "DENY"
+    assert trust("zt-b")["trust_status"] == "COMPROMISED" and trust("zt-b")["violation_count"] == 3
+
+    # 4. Identity games: another id, another agent's id, delete + re-register.
+    assert "unregistered" in req("zt-b2", "x:1", "zt-files", "read_file", note, token="tok-b").reason
+    assert req("zt-a", "x:2", "zt-files", "read_file", note, token="tok-b").reason == "invalid token"
+    with db() as conn:
+        conn.execute("DELETE FROM agents WHERE agent_id='zt-b'")
+        conn.execute(
+            "INSERT INTO agents (agent_id, agent_name, description, token_hash, status, source_ip,"
+            " clearance, created_at, updated_at) VALUES ('zt-b','zt-b','', ?, 'active', '127.0.0.1', 4, ?, ?)",
+            (hash_token("tok-b-new"), _now(), _now()))
+    tokens["zt-b"] = "tok-b-new"
+    r = req("zt-b", "zt-b:run4", "zt-files", "read_file", note)
+    assert r.decision == "DENY" and "COMPROMISED" in r.reason, r
+
+    # 7. Recovery only through every step, then probation.
+    refused(lambda: trust_approve_recovery("zt-b", "tester", "", True), 409)       # not in RECOVERY
+    refused(lambda: trust_request_recovery("zt-b", "tester", False, "x"), 422)     # cause not removed
+    refused(lambda: trust_request_recovery("zt-b", "", True, "x"), 422)            # no approver
+    trust_request_recovery("zt-b", "tester", True, "malicious MCP server removed")
+    assert trust("zt-b")["trust_status"] == "RECOVERY"
+    assert req("zt-b", "zt-b:run5", "zt-files", "", method="initialize").decision == "ALLOW"
+    r = req("zt-b", "zt-b:run5", "zt-files", "read_file", note)
+    assert r.decision == "DENY" and "RECOVERY" in r.reason, r
+    with db() as conn:   # put the revoked token back: approval must notice
+        conn.execute("UPDATE agents SET token_hash=? WHERE agent_id='zt-b'", (hash_token("tok-b"),))
+    tokens["zt-b"] = "tok-b"
+    assert "token not rotated" in refused(lambda: trust_approve_recovery("zt-b", "tester", "", True), 409)
+    with db() as conn:
+        conn.execute("UPDATE agents SET token_hash=? WHERE agent_id='zt-b'", (hash_token("tok-b3"),))
+    tokens["zt-b"] = "tok-b3"
+    assert "UNVERIFIABLE" in refused(lambda: trust_approve_recovery("zt-b", "tester", "", False), 409)
+    trust_approve_recovery("zt-b", "tester", "reviewed by security team", True)
+    tb = trust("zt-b")
+    assert (tb["trust_status"], tb["recovery_status"], tb["violation_count"]) == ("NORMAL", "PROBATION", 0), tb
+    assert req("zt-b", "zt-b:run6", "zt-files", "read_file", note).decision == "ALLOW"
+    r = req("zt-b", "zt-b:run6", "zt-files", "write_note", note)
+    assert r.decision == "DENY" and "PROBATION" in r.reason, r
+    req("zt-b", "zt-b:run6", "zt-files", "read_file", shadow)          # one violation on probation
+    assert trust("zt-b")["trust_status"] == "COMPROMISED"
+    trust_request_recovery("zt-b", "tester", True, "second cleanup")
+    with db() as conn:
+        conn.execute("UPDATE agents SET token_hash=? WHERE agent_id='zt-b'", (hash_token("tok-b4"),))
+    tokens["zt-b"] = "tok-b4"
+    trust_approve_recovery("zt-b", "tester", "ok", True)
+    trust_verify("zt-b", "tester", "probation passed")
+    tb = trust("zt-b")
+    assert (tb["trust_status"], tb["recovery_status"]) == ("NORMAL", "NONE"), tb
+    assert req("zt-b", "zt-b:run7", "zt-files", "write_note", note).decision == "ALLOW"
+    with db() as conn:
+        steps = [(r["action"], r["actor"], r["from_status"], r["to_status"]) for r in conn.execute(
+            "SELECT * FROM audit_log WHERE agent_id='zt-b' AND category='trust' ORDER BY audit_id")]
+    assert ("RECOVERY_REQUESTED", "admin:tester", "COMPROMISED", "RECOVERY/REQUESTED") in steps, steps
+    assert ("RECOVERY_APPROVED", "admin:tester", "RECOVERY/REQUESTED", "NORMAL/PROBATION") in steps, steps
+    assert steps[0][:2] == ("AUTO_RESTRICT", "system"), steps
+
+    # 8. Trust store down: fail closed, and nothing is reset.
+    with db() as conn:
+        conn.execute("ALTER TABLE agent_trust RENAME TO agent_trust_down")
+    try:
+        r = req("zt-a", "zt-a:run1", "zt-files", "read_file", note)
+        assert r.decision == "DENY" and "fail-closed" in r.reason, r
+        out = io.BytesIO()
+        proxy = StdioProxy(["unused"], "zt-files", "zt-a", "tok-a", io.BytesIO(), out, mac_session="zt-a:run1")
+        proxy._pending[proxy._id_key(9)] = {"request_log_id": r.log_id, "agent_id": "zt-a",
+                                             "destination": "stdio:zt-files", "jsonrpc_id": 9,
+                                             "request_method": "tools/call", "transport": "stdio"}
+        proxy.handle_server_line(json.dumps({"jsonrpc": "2.0", "id": 9, "result": {"content": []}}).encode())
+        reply = json.loads(out.getvalue())
+        assert reply["error"]["code"] == JSONRPC_ACCESS_DENIED and "fail-closed" in reply["error"]["data"]["reason"]
+    finally:
+        with db() as conn:
+            conn.execute("ALTER TABLE agent_trust_down RENAME TO agent_trust")
+    assert trust("zt-a")["trust_status"] == "NORMAL" and trust("zt-b")["recovery_status"] == "NONE"
+
+    # 9a. Session requests racing a quarantine: nothing started after it wins.
+    results: list[tuple[float, str]] = []
+    stop = _threading.Event()
+
+    def hammer():
+        while not stop.is_set():
+            started = time.monotonic()
+            results.append((started, req("zt-c", "zt-c:run1", "zt-files", "read_file", note).decision))
+
+    workers = [_threading.Thread(target=hammer) for _ in range(4)]
+    for w in workers:
+        w.start()
+    time.sleep(0.4)
+    trust_quarantine("zt-c", "tester", "race test")
+    quarantined_at = time.monotonic()
+    time.sleep(0.4)
+    stop.set()
+    for w in workers:
+        w.join()
+    after = [d for t, d in results if t > quarantined_at]
+    assert after and all(d == "DENY" for d in after), after
+    assert any(d == "ALLOW" for t, d in results if t < quarantined_at), results[:5]
+
+    # 9b. Work in flight when the agent is quarantined is stopped at the response.
+    out = io.BytesIO()
+    proxy = StdioProxy(["unused"], "zt-files", "zt-d", "tok-d", io.BytesIO(), out, mac_session="zt-d:run1")
+    proxy.proc = SimpleNamespace(stdin=io.BytesIO())
+    proxy.handle_client_line(json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                                         "params": {"name": "read_file", "arguments": note}}).encode())
+    assert proxy.proc.stdin.getvalue(), "request should have been forwarded"
+    trust_quarantine("zt-d", "tester", "quarantined while a call was in flight")
+    proxy.handle_server_line(json.dumps({"jsonrpc": "2.0", "id": 5,
+                                         "result": {"content": [{"type": "text", "text": "doc"}]}}).encode())
+    reply = json.loads(out.getvalue())
+    assert reply["error"]["code"] == JSONRPC_ACCESS_DENIED and "withheld" in reply["error"]["data"]["reason"], reply
+
+    # 10. Regression: HTTP is out of scope by design, so a quarantined agent's
+    # HTTP traffic is still decided by request policy alone.
+    r = evaluate_request({"X-Agent-ID": "zt-c", "X-Agent-Token": "tok-c"},
+                         {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                          "params": {"name": "read_file", "arguments": note}},
+                         source="127.0.0.1", destination="files.example:443")
+    assert r.decision == "ALLOW" and r.mac is None, r
+
+    # Admin API: trust changes need the admin key and an approver; results are audited.
+    from fastapi.testclient import TestClient
+    os.environ["MAYAI_ADMIN_KEY"] = "zt-admin-key"
+    try:
+        app = build_api()
+    finally:
+        os.environ.pop("MAYAI_ADMIN_KEY", None)
+    anonymous, admin = TestClient(app), TestClient(app, headers={"X-Admin-Key": "zt-admin-key"})
+    assert anonymous.post("/api/trust/zt-a/quarantine", json={"approver": "x"}).status_code == 401
+    assert anonymous.post("/api/mac/sessions/zt-a:run1/reset").status_code == 401
+    assert admin.post("/api/trust/zt-a/quarantine", json={"approver": ""}).status_code == 422
+    assert admin.post("/api/trust/ghost/quarantine", json={"approver": "op"}).status_code == 404
+    listed = {row["agent_id"]: row for row in anonymous.get("/api/trust").json()}
+    assert listed["zt-c"]["trust_status"] == "COMPROMISED" and "revoked_token_hash" not in listed["zt-c"]
+    assert listed["zt-a"]["mac_clearance"] == 2 and listed["zt-a"]["sessions"][0]["session_id"] == "zt-a:run1"
+    res = admin.post("/api/trust/zt-c/recovery-request",
+                     json={"approver": "op", "cause_resolved": True, "note": "cleaned"})
+    assert res.status_code == 200 and res.json()["trust_status"] == "RECOVERY", res.text
+    res = admin.post("/api/trust/zt-c/recovery-approve", json={"approver": "op", "accept_unverified_integrity": True})
+    assert res.status_code == 409 and "token not rotated" in res.text, res.text
+    assert admin.put("/api/agents/zt-c?token=tok-c2").status_code == 200
+    res = admin.post("/api/trust/zt-c/recovery-approve", json={"approver": "op", "accept_unverified_integrity": True})
+    assert res.status_code == 200 and res.json()["recovery_status"] == "PROBATION", res.text
+    bad = {"trust_suspicious_after": 0, "trust_compromised_after": 3,
+           "trust_compromised_exfil_after": 2, "trust_restricted_max_level": 2}
+    assert admin.put("/api/trust/settings", json=bad).status_code == 422
+    with db() as conn:
+        version = trust_settings(conn)["policy_version"]
+    res = admin.put("/api/trust/settings", json={**bad, "trust_suspicious_after": 2})
+    assert res.status_code == 200 and res.json()["changed"] == ["trust_suspicious_after"], res.text
+    res = admin.put("/api/trust/settings", json={**bad, "trust_suspicious_after": 2})   # unchanged save
+    assert res.status_code == 200 and res.json()["changed"] == [], res.text
+    with db() as conn:
+        assert trust_settings(conn)["policy_version"] == version + 1      # only the real change counts
+        rows = conn.execute("SELECT detail FROM audit_log WHERE action='SETTINGS_CHANGED'").fetchall()
+    assert [r["detail"] for r in rows] == ["trust_suspicious_after: 1 -> 2"], [dict(r) for r in rows]
+    assert anonymous.get("/api/admin/verify", headers={"X-Admin-Key": "nope"}).json() == {"valid": False}
+    assert admin.get("/api/admin/verify").json() == {"valid": True}
+    assert admin.post("/api/mac/sessions/zt-a:run1/reset").status_code == 200
+    assert anonymous.get("/api/trust").json()[0]["trust_status"] in TRUST_STATES
+    audit = anonymous.get("/api/audit?category=admin_api").json()
+    assert audit["chain"]["ok"], audit
+    assert not any(r["action"].startswith(("POST /api/trust", "PUT /api/trust", "POST /api/mac/sessions"))
+                   for r in audit["rows"]), audit           # those write their own row, never twice
+    token_row = next(r for r in audit["rows"] if r["action"] == "PUT /api/agents/zt-c")
+    assert token_row["agent_id"] == "zt-c" and token_row["detail"] == "에이전트 변경 (토큰 재설정)", token_row
+    assert listed["zt-a"]["evaluated"] is True
+    assert all("tok-c2" not in (r["detail"] or "") for r in audit["rows"])   # tokens never reach the audit
+
+    # Audit trail: append-only through SQLite, edits that bypass it are detected.
+    assert verify_audit_chain()["ok"], verify_audit_chain()
+    for statement in ("UPDATE audit_log SET detail='x'", "DELETE FROM audit_log"):
+        try:
+            with db() as conn:
+                conn.execute(statement)
+        except sqlite3.DatabaseError as exc:
+            assert "append-only" in str(exc), exc
+        else:
+            raise AssertionError(f"audit_log accepted: {statement}")
+    with db() as conn:
+        conn.execute("DROP TRIGGER audit_log_no_update")
+        conn.execute("UPDATE audit_log SET detail='tampered' WHERE audit_id=2")
+    chain = verify_audit_chain()
+    assert not chain["ok"] and chain["broken_at"] == 2, chain
 
 
 # --------------------------------------------------------------------------

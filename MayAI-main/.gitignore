@@ -5,3 +5,12 @@ __pycache__/
 *.pyc
 .env
 **/models/prompt-injection/model.onnx
+
+# Runtime data: created on first run (NAC_DB_PATH overrides the location)
+nac.db
+*.db-wal
+*.db-shm
+
+# Personal tool settings
+.claude/
+.codex/

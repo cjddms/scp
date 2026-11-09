@@ -48,7 +48,7 @@ Evaluate each surface separately. The held-out set must include benign prompt te
 
 1. Install `requirements-ml.txt` in the MayAI virtual environment.
 2. Export the ONNX model and place it with the tokenizer files under `models/prompt-injection`.
-3. Copy `model-manifest.example.json` to `models/prompt-injection/model-manifest.json`, replace every placeholder with the verified digest, and keep the model id and revision aligned with `MayAI.py`.
+3. Copy `examples/model-manifest.example.json` to `models/prompt-injection/model-manifest.json`, replace every placeholder with the verified digest, and keep the model id and revision aligned with `MayAI.py`.
 4. Run `python MayAI.py --selftest`, start the management API, and verify `/api/ml/status` reports `loaded: true` and the expected per-surface thresholds.
 5. Operate in `MONITOR` for at least two weeks. Review false positives per surface (especially `PROMPT_*`), unverified-language counts, partial inspections, unavailable events and p95/p99 latency.
 6. Enable `ENFORCE` only after the acceptance gate is met, and only through explicit response DENY policies for the `*_INJECTION` findings.

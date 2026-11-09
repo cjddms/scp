@@ -1,6 +1,6 @@
-# AI-NAC Security Gateway
+# MayAI Security Gateway
 
-Single-file implementation of the AI-NAC core engine (`nac-proxy_v2.py`):
+Single-file implementation of the MayAI core engine (`nac-proxy_v2.py`):
 
 ```
 Agent Auth -> Protocol Inspector (MCP/A2A) -> Security Analyzers

@@ -3,16 +3,16 @@
 Fake AI agent: sends one MCP JSON-RPC request to an HTTP MCP server through
 the MayAI mitmproxy (default 127.0.0.1:8080) with X-Agent-ID / X-Agent-Token.
 
-    python test_agent_client.py tools/list
-    python test_agent_client.py tools/call echo -a text=hi
-    python test_agent_client.py tools/call echo -a "text=my password is 1234"
-    python test_agent_client.py tools/call echo --token wrong
-    python test_agent_client.py tools/list --target 127.0.0.1:9101
-    python test_agent_client.py tools/list --no-proxy     # straight to the server
-    python test_agent_client.py tools/call echo -a text=hi --stdio test-server   # STDIO transport
-    python test_agent_client.py tools/call fetch_page -a page=evil
-    python test_agent_client.py resources/read file:///docs/notes.md
-    python test_agent_client.py prompts/get summarize -a topic=revenue
+    python tests/test_agent_client.py tools/list
+    python tests/test_agent_client.py tools/call echo -a text=hi
+    python tests/test_agent_client.py tools/call echo -a "text=my password is 1234"
+    python tests/test_agent_client.py tools/call echo --token wrong
+    python tests/test_agent_client.py tools/list --target 127.0.0.1:9101
+    python tests/test_agent_client.py tools/list --no-proxy     # straight to the server
+    python tests/test_agent_client.py tools/call echo -a text=hi --stdio test-server   # STDIO transport
+    python tests/test_agent_client.py tools/call fetch_page -a page=evil
+    python tests/test_agent_client.py resources/read file:///docs/notes.md
+    python tests/test_agent_client.py prompts/get summarize -a topic=revenue
 
 Talks to the proxy with http.client directly, so OS proxy-bypass rules for
 localhost cannot silently skip MayAI. Stdlib only.
@@ -91,7 +91,7 @@ def send_stdio(o: argparse.Namespace, body: str) -> int:
     server = [sys.executable, str(here / "test_mcp_server.py"), "--stdio"]
     if o.rugpull:
         server.append("--rugpull")
-    cmd = [sys.executable, str(here / "MayAI.py"), "stdio", "--server-name", o.stdio, "--", *server]
+    cmd = [sys.executable, str(here.parent / "MayAI.py"), "stdio", "--server-name", o.stdio, "--", *server]
     env = dict(os.environ, MAYAI_AGENT_ID=o.agent, MAYAI_AGENT_TOKEN=o.token)
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
     try:

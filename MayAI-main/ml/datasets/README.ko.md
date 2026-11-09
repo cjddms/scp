@@ -26,7 +26,7 @@
 ## 실행
 
 ```powershell
-python evaluate_ml_model.py datasets\mcp_injection_eval.jsonl models\prompt-injection --threshold 0.90 --details
+python ml\evaluate_ml_model.py ml\datasets\mcp_injection_eval.jsonl models\prompt-injection --threshold 0.90 --details
 ```
 
 결과에서 볼 곳:

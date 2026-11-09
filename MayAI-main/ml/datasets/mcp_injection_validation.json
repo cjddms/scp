@@ -1,0 +1,102 @@
+{
+  "dataset": "mcp_injection_train_2000.jsonl",
+  "rows": 2000,
+  "schema": [
+    "id",
+    "surface",
+    "label",
+    "lang",
+    "category",
+    "text"
+  ],
+  "synthetic": true,
+  "semantic_families": 100,
+  "variants_per_family": 20,
+  "split_unit": "semantic family (b001..b060, a001..a040); encoded in id",
+  "by_label": {
+    "1": 800,
+    "0": 1200
+  },
+  "by_lang": {
+    "ko": 600,
+    "en": 1400
+  },
+  "by_surface": {
+    "resource": 500,
+    "tool_definition": 500,
+    "prompt": 500,
+    "tool_result": 500
+  },
+  "by_category": {
+    "exfiltration": 80,
+    "quiet_indirect": 80,
+    "plain": 200,
+    "trigger_word": 200,
+    "security_discussion": 200,
+    "tool_shadowing": 60,
+    "fake_approval": 80,
+    "jailbreak": 60,
+    "direct_override": 60,
+    "imperative": 200,
+    "phishing": 60,
+    "tool_poisoning": 80,
+    "sensitive_topic": 200,
+    "role_template": 200,
+    "role_spoof": 60,
+    "destructive": 60,
+    "hidden_comment": 60,
+    "manipulation": 60
+  },
+  "reference_rows": 622,
+  "reference_sources": [
+    {
+      "source": "새 폴더/mcp_injection_eval_batch1_100.jsonl",
+      "rows": 100,
+      "sha256": "30f969d0537fc4fa6f9627bbbcffd2e27b3ba1d71df13cbeab03e4e248bd0fdd"
+    },
+    {
+      "source": "새 폴더/mcp_injection_eval_batch2_100.jsonl",
+      "rows": 100,
+      "sha256": "9b7f3befb606fefcfa952116157050ee2a9811a9da52d7dd42bce897a157cc71"
+    },
+    {
+      "source": "새 폴더/mcp_injection_eval_batch3_100.jsonl",
+      "rows": 100,
+      "sha256": "6108c24c7846670a034262d9c6b4aeb16a4ae99394f2277c7077d67da6e760f3"
+    },
+    {
+      "source": "새 폴더/mcp_injection_eval_batch4_100.jsonl",
+      "rows": 100,
+      "sha256": "0b85e017305ee004c09fd90774c11291c2691973e32d580effce9b7b972d0547"
+    },
+    {
+      "source": "새 폴더/mcp_injection_eval_batch5_100.jsonl",
+      "rows": 100,
+      "sha256": "664f165a7ec4fc67cabc4b8b58aeb509fa3079d7c2b6a88085c41005493f2a36"
+    },
+    {
+      "source": "datasets/mcp_injection_eval.jsonl",
+      "rows": 120,
+      "sha256": "61c5d1342ccd238f15669ed72aec9a5e63d655c80eb4db2caf6e87fad912ca6e"
+    },
+    {
+      "source": "heldout.jsonl",
+      "rows": 2,
+      "sha256": "dd931a32faea9d52818515bf0dba26b41f8f5214854d4ed74eb8306ce2916dc8"
+    }
+  ],
+  "duplicate_ids": 0,
+  "normalized_text_duplicates": 0,
+  "reference_exact_overlap": 0,
+  "reference_containment_overlap": 0,
+  "reference_char_tfidf_cosine_threshold": 0.8,
+  "reference_near_overlap_at_threshold": 0,
+  "maximum_reference_similarity": 0.302701,
+  "sha256": "51c04250218457e9560ed4b61f52aab0b8aebe5767f646e869694d3d1c2361b3",
+  "limitations": [
+    "57 of the originally mentioned 679 rows were not available; comparison covers only the 622 supplied/repository rows.",
+    "Synthetic contextual variants share authored semantic families; do not randomly split rows into training and evaluation.",
+    "Character similarity is a heuristic and does not guarantee semantic independence.",
+    "This is newly authored synthetic material, not collected production traffic. No model training or performance validation was performed."
+  ]
+}

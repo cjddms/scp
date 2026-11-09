@@ -1,5 +1,0 @@
-[shell_environment_policy]
-inherit = "core"
-
-[shell_environment_policy.set]
-PATH = 'C:\Program Files\nodejs;C:\Users\user\AppData\Roaming\npm;${PATH}'

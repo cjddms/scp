@@ -1,9 +1,9 @@
-# AI-NAC Security Gateway 개발 명세서
+# MayAI Security Gateway 개발 명세서
 
 ## 1. 문서 목적
 
-본 문서는 졸업 프로젝트 **SCP / AI-NAC**의 핵심 제품인 **AI 전용 보안
-프록시(AI-NAC Security Gateway)**를 실제 개발하기 위한 기준 문서이다.
+본 문서는 졸업 프로젝트 **SCP / MayAI**의 핵심 제품인 **AI 전용 보안
+프록시(MayAI Security Gateway)**를 실제 개발하기 위한 기준 문서이다.
 
 이 문서를 기준으로 Claude Code가 프로젝트 구조, 핵심 모듈, API,
 데이터베이스, 프록시 동작 및 관리자 기능을 구현한다.
@@ -36,14 +36,14 @@ NAC
 서버
 ```
 
-AI-NAC:
+MayAI:
 
 ``` text
 AI Agent
     ↓
 MCP
     ↓
-AI-NAC Gateway
+MayAI Gateway
     ↓
 외부 MCP Server / API
 ```
@@ -60,15 +60,15 @@ AI-NAC Gateway
 
 ### 제품명
 
-**AI-NAC**
+**MayAI**
 
 ### 권장 명칭
 
-**AI-NAC: MCP 기반 AI Agent 접근제어 및 공격 탐지 게이트웨이**
+**MayAI: MCP 기반 AI Agent 접근제어 및 공격 탐지 게이트웨이**
 
 영문:
 
-**AI-NAC: A Security Gateway for AI Agents
+**MayAI: A Security Gateway for AI Agents
 over MCP**
 
 ------------------------------------------------------------------------
@@ -139,7 +139,7 @@ Risk Score 자체만으로 자동 차단하지 않는다.
                         │
                         ▼
         ╔════════════════════════════════╗
-        ║       AI-NAC Gateway           ║
+        ║       MayAI Gateway           ║
         ║                                ║
         ║  ① Proxy / Traffic Intercept  ║
         ║  ② Agent ID / Token 검사       ║
@@ -185,7 +185,7 @@ Risk Score 자체만으로 자동 차단하지 않는다.
 프로젝트의 핵심 기능은 다음 6개 영역이다.
 
 ``` text
-1. AI-NAC Proxy
+1. MayAI Proxy
 2. Agent Authentication / Registration
 3. MCP Protocol Inspection
 4. Policy Engine
@@ -197,7 +197,7 @@ Dashboard는 위 기능을 관리하기 위한 인터페이스로 구현한다.
 
 ------------------------------------------------------------------------
 
-## 7. AI-NAC Proxy
+## 7. MayAI Proxy
 
 ### 기술
 
@@ -218,7 +218,7 @@ AI Agent
 mitmproxy
    │
    ▼
-AI-NAC 검사 로직
+MayAI 검사 로직
    │
    ├── Header 검사
    ├── Agent 등록 확인
@@ -325,7 +325,7 @@ JSON-RPC
    ↓
 Tool / Arguments
    ↓
-AI-NAC
+MayAI
 ```
 
 
@@ -334,7 +334,7 @@ AI-NAC
 
 ## 12. Policy Engine
 
-**Policy Engine은 AI-NAC의 핵심 엔진이다.**
+**Policy Engine은 MayAI의 핵심 엔진이다.**
 
 정책 조건:
 
@@ -380,7 +380,7 @@ external-agent-001
 DENY
 ```
 
-### 정책 우선순위
+### 정책 판단 순서
 
 ``` text
 1. 명시적 차단 정책
@@ -410,7 +410,6 @@ agent_id
 target
 tool
 action
-priority
 enabled
 description
 created_at
@@ -753,7 +752,7 @@ React
 TypeScript
 ```
 
-Dashboard는 단순 통계 화면이 아니라 **AI-NAC 보안 관제 및 정책 관리
+Dashboard는 단순 통계 화면이 아니라 **MayAI 보안 관제 및 정책 관리
 화면**으로 구현한다.
 
 ### Agent 관리
@@ -785,7 +784,6 @@ Protocol
 Target
 Tool / Skill
 Action
-Priority
 Status
 ```
 
@@ -899,7 +897,7 @@ Risk Score는 별도 페이지를 두지 않고 Traffic Monitor와 Security Even
                    │
                    ▼
             ┌─────────────┐
-            │ AI-NAC Core │
+            │ MayAI Core │
             │             │
             │ Auth        │
             │ Inspector   │
@@ -923,14 +921,14 @@ Risk Score는 별도 페이지를 두지 않고 Traffic Monitor와 Security Even
 ```
 
 -   **mitmproxy**: 트래픽 수신/전달 및 인터셉트
--   **AI-NAC Core**: 인증, 프로토콜 분석, 정책, 위험 분석, 보안 분석
+-   **MayAI Core**: 인증, 프로토콜 분석, 정책, 위험 분석, 보안 분석
 -   **FastAPI**: 관리 및 조회 API
 -   **SQLite**: Agent/Policy/Log/Event 데이터 저장
 -   **Dashboard**: 관리자 관리 및 모니터링
 
 ------------------------------------------------------------------------
 
-## 25. 구현 우선순위
+## 25. 구현 순서
 
 ### Phase 1 --- Proxy
 
@@ -1099,7 +1097,7 @@ Log
 1.  ML/LLM을 핵심 판단 엔진으로 만들지 않는다. (변경될수있음)
 2.  Risk Score를 악성 확률로 표현하지 않는다.
 3.  Risk Score만으로 자동 차단하지 않는다.
-4.  Agent ID 기반 접근제어를 AI-NAC의 핵심으로 한다.
+4.  Agent ID 기반 접근제어를 MayAI의 핵심으로 한다.
 5.  X-Agent-ID / X-Agent-Token을 필수 Header로 사용한다.
 6.  등록되지 않은 Agent는 기본적으로 접근을 허용하지 않는다.
 7.  MCP 요청과 응답을 하나의 Gateway에서 처리한다.
@@ -1121,7 +1119,7 @@ Log
 ``` text
 AI Agent가 요청
       ↓
-AI-NAC Proxy가 수신
+MayAI Proxy가 수신
       ↓
 Agent ID / Token 확인
       ↓
@@ -1144,7 +1142,7 @@ Risk Score 생성
 대상으로 요청 전달
 ```
 
-최종적으로 AI-NAC는 다음 역할을 수행해야 한다.
+최종적으로 MayAI는 다음 역할을 수행해야 한다.
 
 > **AI Agent가 무엇에 접근할 수 있는지를 통제하고, 그 접근 과정에서
 > 발생하는 MCP 통신과 위험 요소를 관리자에게 제공하는 AI 전용 NAC
@@ -1154,7 +1152,7 @@ Risk Score 생성
 
 ## 29. 프로젝트 핵심 문장
 
-> **AI-NAC는 기업 내부 AI Agent와 MCP 기반 외부 리소스 사이에서 AI
+> **MayAI는 기업 내부 AI Agent와 MCP 기반 외부 리소스 사이에서 AI
 > Agent의 신원을 확인하고, 프로토콜 요청과 접근 대상, 권한 및 데이터
 > 흐름을 검사하여 정책 기반 접근제어와 위험 정보를 제공하는 AI 전용 보안
 > 게이트웨이이다.**
@@ -1165,7 +1163,7 @@ Risk Score 생성
 기존 NAC
 Network Access Control
         ↓
-AI-NAC
+MayAI
 AI Agent Access Control
 ```
 

@@ -2,11 +2,11 @@
 """
 Minimal MCP (JSON-RPC) test server, HTTP or stdio, for exercising MayAI end to end.
 
-    python test_mcp_server.py               # http://127.0.0.1:9100
-    python test_mcp_server.py --rugpull     # same tools, changed definitions
-    python test_mcp_server.py --port 9101   # a second "server" on another port
-    python test_mcp_server.py --stdio       # MCP stdio transport (run behind MayAI.py stdio)
-    python test_mcp_server.py --poison      # injections hidden in tool/resource/prompt definitions
+    python tests/test_mcp_server.py               # http://127.0.0.1:9100
+    python tests/test_mcp_server.py --rugpull     # same tools, changed definitions
+    python tests/test_mcp_server.py --port 9101   # a second "server" on another port
+    python tests/test_mcp_server.py --stdio       # MCP stdio transport (run behind MayAI.py stdio)
+    python tests/test_mcp_server.py --poison      # injections hidden in tool/resource/prompt definitions
 
 Tools:
     echo        returns its "text" argument (clean response)

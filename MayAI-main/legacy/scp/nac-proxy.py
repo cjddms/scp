@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-AI-NAC Security Gateway - core engine (single-file implementation)
+MayAI Security Gateway - core engine (single-file implementation)
 
 Per the spec, the PROJECT'S CORE ENGINE is the Policy Engine (section 12:
-"Policy Engine은 AI-NAC의 핵심 엔진이다"), fed by Agent Auth, the MCP/A2A
+"Policy Engine은 MayAI의 핵심 엔진이다"), fed by Agent Auth, the MCP/A2A
 Inspectors and the Risk/Security analyzers, and backed by SQLite logging.
 This file implements that whole pipeline end to end, in dependency order:
 
@@ -795,7 +795,7 @@ def write_response_log(context: dict[str, Any], status_code: int, content_type: 
 def response_block_payload(context: dict[str, Any], response_id: int,
                            reason: str) -> bytes:
     data = {
-        "code": "AI_NAC_RESPONSE_BLOCKED",
+        "code": "MAYAI_RESPONSE_BLOCKED",
         "response_id": response_id,
         "reason": reason,
     }
@@ -805,13 +805,13 @@ def response_block_payload(context: dict[str, Any], response_id: int,
             "id": context.get("jsonrpc_id"),
             "error": {
                 "code": -32003,
-                "message": "AI-NAC response blocked by policy",
+                "message": "MayAI response blocked by policy",
                 "data": data,
             },
         }
     else:
         payload = {
-            "error": "AI-NAC response blocked by policy",
+            "error": "MayAI response blocked by policy",
             **data,
         }
     return json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -917,7 +917,7 @@ try:
         def request(self, flow: "_mitm_http.HTTPFlow") -> None:
             flow.metadata["nac_forwarded"] = False
             if flow.request.method == "CONNECT":
-                return  # TLS tunnel setup, not an inspectable AI-NAC request
+                return  # TLS tunnel setup, not an inspectable MayAI request
 
             request_body = _parse_body(flow)
             headers = {k.lower(): v for k, v in flow.request.headers.items()}
@@ -939,7 +939,7 @@ try:
                     pass
                 flow.response = _mitm_http.Response.make(
                     403,
-                    json.dumps({"error": "AI-NAC: access denied",
+                    json.dumps({"error": "MayAI: access denied",
                                 "reason": f"engine error (fail-closed): {exc}"}).encode(),
                     {"Content-Type": "application/json"},
                 )
@@ -959,7 +959,7 @@ try:
                 "request_timestamp": _now(),
             }
 
-            # AI-NAC's own auth headers must never reach the external destination.
+            # MayAI's own auth headers must never reach the external destination.
             flow.request.headers.pop("X-Agent-Token", None)
             flow.request.headers.pop("X-Agent-ID", None)
 
@@ -972,7 +972,7 @@ try:
             if result.decision != "ALLOW":  # only an explicit ALLOW is forwarded
                 flow.response = _mitm_http.Response.make(
                     403,
-                    json.dumps({"error": "AI-NAC: access denied", "reason": result.reason,
+                    json.dumps({"error": "MayAI: access denied", "reason": result.reason,
                                 "risk_score": result.risk_score}).encode(),
                     {"Content-Type": "application/json"},
                 )
@@ -1082,7 +1082,7 @@ def build_api():
     from fastapi import FastAPI, HTTPException
     from pydantic import BaseModel, ConfigDict, field_validator
 
-    app = FastAPI(title="AI-NAC Security Gateway")
+    app = FastAPI(title="MayAI Security Gateway")
 
     # Dashboard (section 20): one static HTML file, no build step, talks to the
     # /api endpoints below. ponytail: a Vite/React SPA is a toolchain to

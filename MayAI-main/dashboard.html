@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MayAI</title>
+<script>
+  // 저장된 테마를 첫 렌더링 전에 적용해 깜빡임을 막는다.
+  try { if (localStorage.getItem("theme") === "light") document.documentElement.dataset.theme = "light"; } catch {}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -15,6 +19,17 @@
     --sev-high: #FF2E2E; --sev-medium: #FFD60A;
     --disp: "Chakra Petch", system-ui, sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    --on-accent: #0B1428; --shadow: rgba(0,0,0,.55); --shadow-soft: rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+  /* 화이트 모드: 흰 배경 + 오렌지(#FE5A2C) 포인트. 색상 토큰만 바꾸고 레이아웃은 그대로 둔다. */
+  :root[data-theme="light"] {
+    --bg: #FFFFFF; --panel: #FFF6F2; --panel-2: #FAFAFA; --line: #ECDCD5;
+    --ink: #1F2328; --dim: #6B6F76;
+    --cyan: #FE5A2C; --allow: #13865F; --deny: #C8283C; --amber: #B26A00;
+    --sev-high: #D0182B; --sev-medium: #C99400;
+    --on-accent: #FFFFFF; --shadow: rgba(60,30,20,.18); --shadow-soft: rgba(60,30,20,.14);
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 400 13px/1.5 var(--mono); word-break: keep-all; }
@@ -22,8 +37,10 @@
   :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
   /* ---- top bar ---- */
-  .bar { display: flex; align-items: center; gap: 22px; padding: 0 20px;
-    height: 52px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+  /* 높이를 고정하지 않는다: 폭이 좁아지면 탭 줄이 아래로 내려가고(stacked), 남는 탭은 가로 스크롤된다. */
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px clamp(10px, 1.6vw, 22px);
+    padding: 7px clamp(12px, 2.5vw, 20px); min-height: 52px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+  .bar > :not(nav) { flex-shrink: 0; }
   .mark { font: 700 16px/1 var(--disp); letter-spacing: .14em; color: var(--ink); white-space: nowrap; }
   .mark b { color: var(--cyan); font-weight: 700; }
   .live { display: flex; align-items: center; gap: 7px; font: 500 11px/1 var(--disp);
@@ -31,15 +48,37 @@
   .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%;
     background: var(--allow); box-shadow: 0 0 8px var(--allow); }
   .live.down::before { background: var(--deny); box-shadow: 0 0 8px var(--deny); }
-  nav { display: flex; gap: 2px; margin-left: auto; flex-wrap: wrap; }
-  nav button { display: flex; align-items: center; gap: 7px; background: none; border: 0;
-    color: var(--dim); font: 500 12px/1 var(--disp); letter-spacing: .06em;
-    padding: 8px 12px; border-radius: 4px; cursor: pointer; }
+  .theme-toggle { display: flex; align-items: center; gap: 8px; background: none; border: 0; padding: 4px;
+    color: var(--dim); font: 500 11px/1 var(--disp); letter-spacing: .06em; cursor: pointer; white-space: nowrap; }
+  .theme-toggle:hover { color: var(--ink); }
+  .theme-toggle .track { position: relative; width: 38px; height: 20px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line); transition: background .2s ease; }
+  .theme-toggle .knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--cyan); transition: transform .2s ease; }
+  .theme-toggle[aria-checked="true"] .track { background: color-mix(in srgb, var(--cyan) 18%, var(--bg)); border-color: var(--cyan); }
+  .theme-toggle[aria-checked="true"] .knob { transform: translateX(18px); }
+  @media (prefers-reduced-motion: reduce) { .theme-toggle .track, .theme-toggle .knob { transition: none; } }
+  nav { position: relative; display: flex; gap: 2px; flex: 1 1 520px; min-width: 0;
+    overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+  nav::-webkit-scrollbar { display: none; }
+  /* 한 줄에 있을 땐 오른쪽 정렬. auto margin은 넘칠 때 0이 되어 앞쪽 탭이 잘리지 않는다. */
+  nav button:first-child { margin-left: auto; }
+  .bar.stacked nav { flex-basis: 100%; }
+  .bar.stacked nav button:first-child { margin-left: 0; }
+  nav.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent); }
+  nav.fade-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 32px);
+    mask-image: linear-gradient(90deg, transparent, #000 32px); }
+  nav.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+  nav button { display: flex; flex-shrink: 0; align-items: center; gap: 7px; background: none; border: 0;
+    color: var(--dim); font: 500 12px/1 var(--disp); letter-spacing: .06em; white-space: nowrap;
+    padding: 8px 12px; border-radius: 4px; cursor: pointer; transition: background .15s ease, color .15s ease; }
   nav button svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.6; }
   nav button:hover { color: var(--ink); }
-  nav button.on { color: var(--bg); background: var(--cyan); }
+  nav button.on { color: var(--on-accent); background: var(--cyan); }
 
-  main { padding: 20px; width: 100%; max-width: none; }
+  main { padding: clamp(12px, 2.5vw, 20px); width: 100%; max-width: none; }
   section { display: none; }
   section.on { display: block; }
 
@@ -55,8 +94,8 @@
   .ghost:hover { color: var(--ink); border-color: var(--cyan); }
 
   /* ---- command wall (Feed only) ---- */
-  .wall { display: grid; grid-template-columns: 200px 1fr; gap: 14px; margin: 0 0 20px; }
-  .gauge { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  .wall { display: grid; grid-template-columns: minmax(170px, 200px) minmax(0, 1fr); gap: 14px; margin: 0 0 20px; }
+  .gauge { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
     padding: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
   .gauge svg { width: 128px; height: 128px; transform: rotate(-90deg); }
   .gauge .track { stroke: var(--line); }
@@ -66,17 +105,19 @@
   .gauge .pct { font: 700 26px/1 var(--disp); color: var(--ink); }
   .gauge .lbl { font-size: 11px; color: var(--dim); }
   .wall-right { display: flex; flex-direction: column; gap: 14px; }
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
-  .tile .row1 { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 11px; }
-  .tile .row1 svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.6; }
-  .tile .n { font: 700 30px/1.1 var(--disp); color: var(--ink); margin-top: 6px; }
+  /* 4칸 → 2칸 (3+1처럼 한 칸만 남는 배치가 생기지 않게 미디어쿼리로 끊는다) */
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  @media (max-width: 1000px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+  .tile .row1 { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .tile .row1 svg { flex-shrink: 0; width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+  .tile .n { font: 700 clamp(22px, 2.2vw, 30px)/1.1 var(--disp); color: var(--ink); margin-top: 6px; }
   .tile.allow .n { color: var(--allow); } .tile.deny .n { color: var(--deny); }
   .tile.events .n { color: var(--amber); } .tile.events .row1 { color: var(--amber); }
   .strip-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
   .strip-wrap .cap { color: var(--dim); font-size: 11px; margin-bottom: 10px; }
   .strip { display: flex; gap: 2px; align-items: flex-end; height: 42px; }
-  .strip i { flex: 1; border-radius: 1px; background: var(--allow); min-width: 2px; }
+  .strip i { flex: 1; height: 100%; border-radius: 1px; background: var(--allow); min-width: 2px; }
   .strip i.d { background: var(--deny); }
   .strip.empty { color: var(--dim); font-size: 12px; height: auto; }
 
@@ -118,12 +159,13 @@
   tr.lens-row td { background: transparent !important; border-bottom-color: transparent; }
   .lens { position: absolute; z-index: 40; pointer-events: none; border: 1px solid var(--cyan); border-radius: 10px;
     background: color-mix(in srgb, var(--panel) 72%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--cyan) 18%, transparent), 0 18px 48px rgba(0,0,0,.55); }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 10px; margin: 14px 0; }
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--cyan) 18%, transparent), 0 18px 48px var(--shadow); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(210px,100%),1fr)); gap: 10px; margin: 14px 0; }
   .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 5px; background: var(--panel); }
-  .card span,.card small { color: var(--muted); overflow-wrap: break-word; }
+  .card span,.card small { color: var(--dim); overflow-wrap: break-word; }
   .card strong { font-size: 20px; }
   .risk-hi { color: var(--deny); font-weight: 500; }
+  .ok { color: var(--allow); }
   .risk-md { color: var(--amber); }
   .stamp { display: inline-block; white-space: nowrap; font: 500 11px/1 var(--mono); letter-spacing: .1em;
     padding: 4px 7px; border-radius: 3px; border: 1px solid; }
@@ -136,14 +178,14 @@
   form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
     background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 0 0 18px; }
   input, select { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
-    font: 400 12px/1 var(--mono); padding: 8px 10px; border-radius: 4px; }
+    font: 400 12px/1 var(--mono); padding: 8px 10px; border-radius: 4px; max-width: 100%; }
   input::placeholder { color: var(--dim); }
   input:focus::placeholder { color: transparent; }
   form input[data-suggest] { width: 260px; }
   form input[name="name"] { width: 220px; }
-  .suggest { position: absolute; z-index: 50; min-width: 220px; max-height: 260px; overflow-y: auto;
+  .suggest { position: absolute; z-index: 50; min-width: 220px; max-width: calc(100vw - 16px); max-height: 260px; overflow-y: auto;
     background: var(--panel-2); border: 1px solid var(--cyan); border-radius: 4px; padding: 4px 0;
-    box-shadow: 0 8px 24px rgba(0,0,0,.45); }
+    box-shadow: 0 8px 24px var(--shadow-soft); }
   .suggest[hidden] { display: none; }
   .suggest div { padding: 7px 10px; cursor: pointer; font-size: 12px; display: flex; gap: 10px; justify-content: space-between; }
   .suggest div small { color: var(--dim); }
@@ -152,7 +194,7 @@
   form.editing { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber) inset; }
   .edit-note { color: var(--amber); font-size: 11px; }
   tr.editing-row td { background: color-mix(in srgb, var(--amber) 10%, transparent); }
-  .primary { background: var(--cyan); border: 1px solid var(--cyan); color: var(--bg);
+  .primary { background: var(--cyan); border: 1px solid var(--cyan); color: var(--on-accent);
     font: 600 12px/1 var(--disp); letter-spacing: .05em; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
   .primary:hover { filter: brightness(1.1); }
   .cell-btn { background: none; border: 1px solid var(--line); color: var(--dim);
@@ -174,16 +216,16 @@
     border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
   .step-n { width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line); display: grid;
     place-items: center; font: 600 12px/1 var(--disp); color: var(--dim); }
-  .step.set .step-n { background: var(--cyan); border-color: var(--cyan); color: var(--bg); }
+  .step.set .step-n { background: var(--cyan); border-color: var(--cyan); color: var(--on-accent); }
   .step-t { font: 600 12px/1 var(--disp); letter-spacing: .06em; margin: 5px 0 10px; }
   .step-t span { color: var(--dim); font-weight: 400; margin-left: 6px; }
   .pills { display: flex; flex-wrap: wrap; gap: 6px; }
   .pill { background: var(--panel-2); border: 1px solid var(--line); color: var(--dim);
     font: 500 12px/1 var(--mono); padding: 7px 11px; border-radius: 999px; cursor: pointer; }
   .pill:hover { color: var(--ink); border-color: var(--cyan); }
-  .pill.on { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
+  .pill.on { color: var(--on-accent); background: var(--cyan); border-color: var(--cyan); }
   .pill:disabled { opacity: .35; cursor: not-allowed; }
-  .rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+  .rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: 8px; }
   .rule { text-align: left; border: 1px solid var(--line);
     background: linear-gradient(90deg, color-mix(in srgb, var(--sev) 16%, transparent), transparent 55%), var(--panel-2);
     border-left: 5px solid color-mix(in srgb, var(--sev) 80%, transparent); border-radius: 6px; padding: 10px 12px; color: var(--ink);
@@ -192,14 +234,14 @@
   .rule:hover { border-color: var(--cyan); border-left-color: color-mix(in srgb, var(--sev) 80%, transparent); }
   .rule.on, .rule.on:hover { z-index: 1; transform: scale(1.07);
     border-color: var(--line); border-left-color: color-mix(in srgb, var(--sev) 80%, transparent);
-    box-shadow: 0 14px 30px rgba(0, 0, 0, .55), 0 0 24px color-mix(in srgb, var(--sev) 30%, transparent); }
+    box-shadow: 0 14px 30px var(--shadow), 0 0 24px color-mix(in srgb, var(--sev) 30%, transparent); }
   @media (prefers-reduced-motion: reduce) { .rule { transition: none; } }
   .rule .top { display: flex; justify-content: space-between; gap: 8px; font: 600 12px/1.3 var(--disp); }
   .rule .n { font-variant-numeric: tabular-nums; color: var(--cyan); }
   .rule .n.zero { color: var(--dim); }
   .rule .k { font: 500 10.5px/1.3 var(--mono); color: var(--dim); overflow-wrap: break-word; }
   .rule p { margin: 0; color: var(--dim); font-size: 11.5px; }
-  .tag { display: inline-block; font: 500 10px/1 var(--mono); padding: 2px 5px; border-radius: 3px;
+  .tag { display: inline-block; font: 500 11px/1.2 var(--mono); padding: 2px 6px; border-radius: 3px;
     border: 1px solid var(--line); color: var(--dim); margin: 2px 4px 0 0; }
   .crumb { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: 0 0 12px; font-size: 12px; }
   .crumb b { color: var(--cyan); font-weight: 500; }
@@ -210,30 +252,71 @@
     background: color-mix(in srgb, var(--sev) 10%, transparent); }
 
   @media (max-width: 720px) {
-    .wall { grid-template-columns: 1fr; } .tiles { grid-template-columns: repeat(2, 1fr); }
-    nav { width: 100%; margin: 6px 0 0; } .bar { height: auto; padding: 10px 16px; flex-wrap: wrap; }
+    .wall { grid-template-columns: minmax(0, 1fr); }
+    .gauge { flex-direction: row; gap: 20px; padding: 12px 16px; }
+    .gauge svg { width: 88px; height: 88px; }
+    .gauge figcaption { margin-top: 0; text-align: left; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    form input, form input[data-suggest], form input[name="name"], form select { flex: 1 1 180px; width: auto; }
+    .rule.on, .rule.on:hover { transform: scale(1.03); }
   }
-  @media (prefers-reduced-motion: reduce) { .gauge .val { transition: none; } }
+  @media (max-width: 480px) { #theme-label { display: none; } }
+  /* 창 크기를 바꾸는 동안에는 전환 효과를 끈다: 레이아웃이 바뀔 때 카드·탭이 뒤늦게 따라오며 흔들리는 것을 막는다. */
+  .resizing *, .resizing *::before, .resizing *::after { transition: none !important; }
+  @media (prefers-reduced-motion: reduce) { .gauge .val, nav button { transition: none; } }
+  /* 관리자 키 대화상자 */
+  #admin-key-btn.key-ok { color: var(--allow); border-color: var(--allow); }
+  #admin-key-btn.key-bad { color: var(--deny); border-color: var(--deny); }
+  #key-dialog { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px;
+    padding: 20px 22px; width: min(440px, calc(100vw - 32px)); box-shadow: 0 18px 50px var(--shadow); }
+  #key-dialog::backdrop { background: rgba(0,0,0,.5); }
+  #key-dialog form { border: 0; padding: 0; margin: 0; background: none; box-shadow: none; display: block; }
+  #key-dialog h3 { margin: 0 0 6px; font-family: var(--disp); font-size: 16px; }
+  #key-dialog p { margin: 0 0 12px; color: var(--dim); font-size: 12.5px; line-height: 1.55; }
+  #key-dialog input { width: 100%; box-sizing: border-box; }
+  #key-dialog .key-msg { min-height: 18px; margin: 8px 0 12px; font-size: 12.5px; }
+  #key-dialog .key-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+  #key-dialog .key-row .spacer { flex: 1; }
 </style>
 </head>
 <body>
 <div class="bar">
-  <div class="mark">AI&#8209;NAC <b>MayAI</b></div>
-  <div class="live" id="live">connected</div>
+  <div class="mark"><b>MayAI</b></div>
+  <div class="live" id="live">연결됨</div>
+  <button type="button" class="theme-toggle" id="theme-toggle" role="switch" aria-checked="false"
+    aria-label="화이트 모드" onclick="toggleTheme()">
+    <span class="track"><span class="knob"></span></span><span id="theme-label">다크 모드</span>
+  </button>
+  <button type="button" class="ghost" id="admin-key-btn" onclick="setAdminKey()" title="변경 작업에 쓰는 관리자 키">관리자 키</button>
+  <dialog id="key-dialog" aria-labelledby="key-dialog-title">
+    <form onsubmit="submitAdminKey(event)">
+      <h3 id="key-dialog-title">관리자 키</h3>
+      <p>정책 변경·격리·복구 같은 변경 작업에 필요합니다. 서버를 처음 실행할 때 콘솔에 표시되거나
+        <code>MAYAI_ADMIN_KEY</code> 환경변수로 지정한 값입니다. 서버에서 맞는 키인지 확인한 뒤 이 브라우저에만 저장합니다.</p>
+      <input id="key-input" type="password" autocomplete="off" placeholder="관리자 키 입력" aria-label="관리자 키">
+      <div class="key-msg" id="key-msg"></div>
+      <div class="key-row">
+        <button type="button" class="ghost" id="key-clear" onclick="clearAdminKey()">저장된 키 삭제</button>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" onclick="closeKeyDialog(false)">닫기</button>
+        <button class="primary">확인</button>
+      </div>
+    </form>
+  </dialog>
   <nav id="nav"></nav>
 </div>
 
 <main>
   <section id="explore" class="on">
-    <h1 class="head">Explorer</h1>
-    <p class="sub">Transport → Component → Direction → Method → Detection 순서로 고르세요.<br>단계를 고를수록 아래 트래픽이 좁혀지고, 그 경로에 적용되는 탐지 룰이 정리됩니다.</p>
+    <h1 class="head">탐색기</h1>
+    <p class="sub">전송 방식 → 구성요소 → 방향 → 메서드 → 탐지 룰 순서로 고르세요.<br>단계를 고를수록 아래 트래픽이 좁혀지고, 그 경로에 적용되는 탐지 룰이 정리됩니다.</p>
     <div class="steps" id="x-steps"></div>
     <div class="crumb" id="x-crumb"></div>
     <div class="wrap"><table id="explore-t"></table></div>
   </section>
 
   <section id="traffic">
-    <h1 class="head">Traffic</h1>
+    <h1 class="head">트래픽 피드</h1>
     <p class="sub">게이트에 도착한 모든 요청을 최신순으로 보여줍니다.<br>판정을 직접 바꾸면 이후 같은 요청에 적용되는 정책으로 저장됩니다.</p>
 
     <div class="wall">
@@ -243,14 +326,14 @@
           <circle class="val" id="gauge-val" cx="60" cy="60" r="52" fill="none" stroke-width="10"
             stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
         </svg>
-        <figcaption><div class="pct" id="gauge-pct">&mdash;</div><div class="lbl">cleared</div></figcaption>
+        <figcaption><div class="pct" id="gauge-pct">&mdash;</div><div class="lbl">허용률</div></figcaption>
       </figure>
       <div class="wall-right">
         <div class="tiles">
-          <div class="tile allow"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M6 10l3 3 5-6"/></svg>cleared</div><div class="n" id="k-allow">&mdash;</div></div>
-          <div class="tile deny"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M7 7l6 6M13 7l-6 6"/></svg>refused</div><div class="n" id="k-deny">&mdash;</div></div>
+          <div class="tile allow"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M6 10l3 3 5-6"/></svg>허용</div><div class="n" id="k-allow">&mdash;</div></div>
+          <div class="tile deny"><div class="row1"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/><path d="M7 7l6 6M13 7l-6 6"/></svg>차단</div><div class="n" id="k-deny">&mdash;</div></div>
           <div class="tile events"><div class="row1"><svg viewBox="0 0 20 20"><path d="M5 3v14"/><path d="M5 4h9l-2 3 2 3H5"/></svg>미처리 이벤트</div><div class="n" id="k-events">&mdash;</div></div>
-          <div class="tile"><div class="row1"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/></svg>agents</div><div class="n" id="k-agents">&mdash;</div></div>
+          <div class="tile"><div class="row1"><svg viewBox="0 0 20 20"><rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/></svg>에이전트</div><div class="n" id="k-agents">&mdash;</div></div>
         </div>
         <div class="strip-wrap">
           <div class="cap">최근 판정 50건 &mdash; 오른쪽이 최신</div>
@@ -260,7 +343,7 @@
     </div>
 
     <div class="tools">
-      <button class="ghost" onclick="loadTraffic();loadWall()">Refresh</button>
+      <button class="ghost" onclick="loadTraffic();loadWall()">새로고침</button>
       <button id="delete-selected-logs" class="link-danger" onclick="deleteSelected('logs')" disabled>선택 삭제</button>
       <span id="selected-count-logs" class="dim"></span>
       <button class="link-danger" onclick="delAll('logs')">로그 전체 삭제</button>
@@ -269,24 +352,24 @@
   </section>
 
   <section id="responses">
-    <h1 class="head">Responses</h1>
-    <p class="sub">서버 응답은 기본 허용입니다.<br>응답 정책에 매칭되면 MONITOR 모드에서는 기록만 하고, ENFORCE 모드에서는 차단합니다.</p>
+    <h1 class="head">응답</h1>
+    <p class="sub">서버 응답은 기본 허용입니다.<br>응답 정책에 매칭되면 모니터링 모드에서는 기록만 하고, 차단 모드에서는 응답을 막습니다.</p>
     <div class="cards" id="ml-status"></div>
     <div class="tools">
-      <label class="fld">Enforcement</label>
-      <select class="response-mode" aria-label="Enforcement" onchange="setResponseMode(this.value)"><option>MONITOR</option><option>ENFORCE</option></select>
-      <button class="ghost" onclick="loadResponses()">Refresh</button>
+      <label class="fld">응답 처리 모드</label>
+      <select class="response-mode" aria-label="응답 처리 모드" onchange="setResponseMode(this.value)"><option value="MONITOR">모니터링 (MONITOR)</option><option value="ENFORCE">차단 (ENFORCE)</option></select>
+      <button class="ghost" onclick="loadResponses()">새로고침</button>
     </div>
     <div class="wrap"><table id="responses-t"></table></div>
   </section>
 
   <section id="respolicies">
-    <h1 class="head">Response Policies</h1>
-    <p class="sub">인증된 요청자, 실제 목적지, 응답 탐지 항목으로 매칭합니다.<br>조건이 구체적인 정책이 우선 순위보다 먼저 적용되고, 완전히 동률일 때만 DENY가 이깁니다.<br>정책이 없으면 응답은 허용됩니다.</p>
+    <h1 class="head">응답 정책</h1>
+    <p class="sub">인증된 요청자, 실제 목적지, 응답 탐지 항목으로 매칭합니다.<br>조건이 더 구체적인 정책이 먼저 적용되고, 완전히 동률일 때만 차단(DENY)이 이깁니다.<br>정책이 없으면 응답은 허용됩니다.</p>
     <div class="tools">
-      <label class="fld">Enforcement</label>
-      <select class="response-mode" aria-label="Enforcement" onchange="setResponseMode(this.value)"><option>MONITOR</option><option>ENFORCE</option></select>
-      <span class="dim">MONITOR = DENY 매칭도 기록만 · ENFORCE = 실제 차단</span>
+      <label class="fld">응답 처리 모드</label>
+      <select class="response-mode" aria-label="응답 처리 모드" onchange="setResponseMode(this.value)"><option value="MONITOR">모니터링 (MONITOR)</option><option value="ENFORCE">차단 (ENFORCE)</option></select>
+      <span class="dim">모니터링 = 차단 정책에 매칭돼도 기록만 · 차단 = 실제로 응답 차단</span>
     </div>
     <form id="response-policy-form" onsubmit="createResponsePolicy(event)">
       <input name="name" placeholder="정책 이름 (예: allow-search)" title="정책 이름" required autocomplete="off">
@@ -306,8 +389,7 @@
         <option>ML_SUSPICIOUS_CONTENT</option><option>ML_PARTIAL_INSPECTION</option>
         <option>ML_UNSUPPORTED_LANGUAGE</option><option>ML_INSPECTION_UNAVAILABLE</option>
       </select>
-      <select name="action" title="동작"><option>DENY</option><option>ALLOW</option></select>
-      <input name="priority" type="number" placeholder="우선순위 (기본 100)" title="우선순위 · 숫자가 작을수록 먼저 적용 · 비우면 100" style="width:170px">
+      <select name="action" title="동작"><option value="DENY">차단 (DENY)</option><option value="ALLOW">허용 (ALLOW)</option></select>
       <button class="primary" data-label="응답 정책 추가">응답 정책 추가</button>
       <button type="button" class="ghost edit-cancel" onclick="cancelEdit('response-policy')" hidden>취소</button>
       <span class="edit-note"></span>
@@ -321,13 +403,19 @@
   </section>
 
   <section id="agents">
-    <h1 class="head">Agents</h1>
+    <h1 class="head">에이전트</h1>
     <p class="sub">게이트웨이를 사용할 수 있는 AI 에이전트 목록입니다.<br>등록되지 않은 ID는 게이트를 통과할 수 없습니다.</p>
     <form onsubmit="createAgent(event)">
-      <input name="agent_id" placeholder="agent id" required>
-      <input name="agent_name" placeholder="name" required>
-      <input name="token" placeholder="token" required>
+      <input name="agent_id" placeholder="에이전트 ID" required>
+      <input name="agent_name" placeholder="이름" required>
+      <input name="token" placeholder="토큰" required>
       <input name="source_ip" placeholder="출발지 IPv4 (예: 192.168.56.102)" required>
+      <select name="clearance" title="MAC 허가 등급 (STDIO)">
+        <option value="1">허가 L1 Public (공개정보)</option>
+        <option value="2" selected>허가 L2 Internal (내부정보)</option>
+        <option value="3">허가 L3 Restricted (제한정보)</option>
+        <option value="4">허가 L4 Critical (핵심기밀)</option>
+      </select>
       <button class="primary">에이전트 등록</button>
     </form>
     <div class="tools">
@@ -339,15 +427,14 @@
   </section>
 
   <section id="policies">
-    <h1 class="head">Request Policies</h1>
-    <p class="sub">모든 요청에 적용됩니다.<br>명시적 DENY가 항상 ALLOW보다 우선하고, 그다음은 가장 구체적인 정책, 마지막으로 priority 숫자가 작은 정책 순입니다.</p>
+    <h1 class="head">요청 정책</h1>
+    <p class="sub">모든 요청에 적용됩니다.<br>명시적 차단(DENY)이 항상 허용(ALLOW)보다 먼저 적용되고, 그다음은 가장 구체적인 정책입니다.</p>
     <form id="policy-form" onsubmit="createPolicy(event)">
       <input name="name" placeholder="정책 이름 (예: allow-search)" title="정책 이름" required autocomplete="off">
       <input name="agent_id" placeholder="에이전트 ID (예: agent-001)" title="에이전트 ID · * = 모든 에이전트" required autocomplete="off" data-suggest="agent">
       <input name="target" placeholder="목적지 host:port 또는 stdio:이름" title="목적지 host:port 또는 stdio:이름 · * = 모든 목적지" required autocomplete="off" data-suggest="target">
       <input name="tool" placeholder="도구 이름 또는 MCP 메서드 (예: echo)" title="도구 이름 또는 MCP 메서드 · * = 모든 도구" required autocomplete="off" data-suggest="tool">
-      <select name="action" title="동작"><option>ALLOW</option><option>DENY</option></select>
-      <input name="priority" type="number" placeholder="우선순위 (기본 100)" title="우선순위 · 숫자가 작을수록 먼저 적용 · 비우면 100" style="width:170px">
+      <select name="action" title="동작"><option value="ALLOW">허용 (ALLOW)</option><option value="DENY">차단 (DENY)</option></select>
       <button class="primary" data-label="정책 추가">정책 추가</button>
       <button type="button" class="ghost edit-cancel" onclick="cancelEdit('policy')" hidden>취소</button>
       <span class="edit-note"></span>
@@ -360,10 +447,72 @@
     <div class="wrap"><table id="policies-t"></table></div>
   </section>
 
+  <section id="mac">
+    <h1 class="head">MAC 보안 등급</h1>
+    <p class="sub">내부 STDIO 통신에만 적용되는 강제 접근통제(MAC)입니다. 요청 정책을 통과해도 아래 두 규칙을 어기면 차단됩니다.<br>
+      ① 상위 등급 접근 금지: 에이전트 허가 등급보다 높은 도구·리소스·프롬프트는 쓸 수 없습니다.<br>
+      ② 하위 등급 유출 금지: 높은 등급 데이터를 받은 세션은 그보다 낮은 등급 대상으로 쓰기·외부 전송을 할 수 없습니다.<br>
+      라벨이 없는 대상은 L4 핵심기밀로 간주합니다. 세션 등급은 올라가기만 하고, 에이전트가 다시 인증하거나 관리자가 초기화할 때만 L1로 돌아갑니다.</p>
+    <form id="mac-label-form" onsubmit="createMacLabel(event)">
+      <input name="name" placeholder="라벨 이름 (예: 급여 DB)" title="라벨 이름" required autocomplete="off">
+      <input name="target" placeholder="목적지 stdio:이름 (예: stdio:hr-db)" title="stdio:서버이름 · * = 모든 STDIO 서버" required autocomplete="off" data-suggest="target">
+      <input name="object_pattern" placeholder="도구·리소스 URI·프롬프트 (예: query_*)" title="도구 이름, 리소스 URI 또는 프롬프트 이름 · * 와일드카드 가능" required autocomplete="off">
+      <select name="level" title="보안 등급">
+        <option value="1">L1 Public (공개정보)</option><option value="2" selected>L2 Internal (내부정보)</option>
+        <option value="3">L3 Restricted (제한정보)</option><option value="4">L4 Critical (핵심기밀)</option>
+      </select>
+      <select name="flow" title="데이터 흐름">
+        <option value="read">읽기</option><option value="write">쓰기</option><option value="egress">외부 전송</option>
+      </select>
+      <button class="primary" data-label="라벨 추가">라벨 추가</button>
+      <button type="button" class="ghost edit-cancel" onclick="cancelEdit('mac-label')" hidden>취소</button>
+      <span class="edit-note"></span>
+    </form>
+    <div class="wrap"><table id="mac-labels-t"></table></div>
+    <h2 class="head" style="font-size:15px;margin-top:26px">세션 등급</h2>
+    <p class="sub">에이전트 실행 단위(세션)마다 지금까지 받은 데이터 중 가장 높은 등급입니다. 같은 실행에서 띄운 STDIO 서버들은 한 세션을 공유합니다.</p>
+    <div class="tools"><button class="ghost" onclick="loadMac()">새로고침</button></div>
+    <div class="wrap"><table id="mac-sessions-t"></table></div>
+  </section>
+
+  <section id="trust">
+    <h1 class="head">에이전트 신뢰</h1>
+    <p class="sub">STDIO 제로 트러스트의 에이전트별 신뢰 상태입니다. 세션은 초기화할 수 있어도 이 상태는 재시작·재인증으로 바뀌지 않습니다.<br>
+      정상 → 의심(읽기만, 허용 등급 이하) → 침해(모든 요청 차단, 세션·토큰 폐기) 순으로 자동 전환되고,
+      침해에서 돌아오려면 복구 요청 → 토큰 교체 → 관리자 승인 → 관찰 → 관찰 종료를 거쳐야 합니다.</p>
+    <div class="wrap"><table id="trust-t"></table></div>
+
+    <h2 class="head" style="font-size:15px;margin-top:26px">자동 전환 기준</h2>
+    <p class="sub">임시 운영값입니다(검증된 표준 수치 아님). 횟수는 마지막 검증(복구 승인·검증 완료) 이후부터 셉니다.
+      위반 = 에이전트 스스로의 고위험 요청(상위 등급 접근, 유출 시도, 민감 경로, 위험 명령). 노출 = 에이전트가 받은 인젝션(의심까지만 반영).</p>
+    <form id="trust-settings-form" onsubmit="saveTrustSettings(event)">
+      <label class="fld">의심 전환: 위반+노출</label><input name="trust_suspicious_after" type="number" min="1" style="width:70px" required>
+      <label class="fld">침해 전환: 위반</label><input name="trust_compromised_after" type="number" min="1" style="width:70px" required>
+      <label class="fld">침해 전환: 유출 시도</label><input name="trust_compromised_exfil_after" type="number" min="1" style="width:70px" required>
+      <label class="fld">의심·관찰 중 읽기 허용 등급</label>
+      <select name="trust_restricted_max_level">
+        <option value="1">L1 이하</option><option value="2">L2 이하</option><option value="3">L3 이하</option><option value="4">L4 이하</option>
+      </select>
+      <button class="primary">기준 저장</button>
+      <span class="dim" id="policy-version"></span>
+    </form>
+
+    <h2 class="head" style="font-size:15px;margin-top:26px">감사 로그</h2>
+    <p class="sub" id="audit-chain"></p>
+    <div class="tools">
+      <select id="audit-category" onchange="loadTrust()" aria-label="감사 로그 분류">
+        <option value="">전체</option><option value="trust">신뢰 상태 변경</option>
+        <option value="session">세션 발급·초기화</option><option value="admin_api">관리자 변경(정책 변경 이력)</option>
+      </select>
+      <button class="ghost" onclick="loadTrust()">새로고침</button>
+    </div>
+    <div class="wrap"><table id="audit-t"></table></div>
+  </section>
+
   <section id="events">
-    <h1 class="head">Events</h1>
+    <h1 class="head">보안 이벤트</h1>
     <p class="sub">검사기가 잡아낸 항목입니다: 권한 남용, 요청·응답 속 민감정보, 같은 이름으로 바뀐 Tool / Resource / Prompt 정의, 스키마 위반 등.</p>
-    <div class="tools"><button class="ghost" onclick="loadEvents()">Refresh</button></div>
+    <div class="tools"><button class="ghost" onclick="loadEvents()">새로고침</button></div>
     <div class="wrap"><table id="events-t"></table></div>
   </section>
 
@@ -372,14 +521,38 @@
 <script>
 const $ = s => document.querySelector(s);
 const TABS = {
-  explore:  {label:"Explorer", icon:'<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5l5 5"/>',          load:loadExplore},
-  traffic:  {label:"Feed",     icon:'<path d="M2 10h4l2-5 3 10 2-6 1 1h4"/>',                          load:()=>{loadTraffic();loadWall();}},
-  responses:{label:"Responses",icon:'<path d="M4 4h12v9H8l-4 4z"/><path d="M7 8h6M7 11h4"/>',          load:loadResponses},
-  agents:   {label:"Agents",   icon:'<rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/>', load:loadAgents},
-  policies: {label:"Req Policies", icon:'<path d="M10 2l6 3v5c0 4-3 6-6 7-3-1-6-3-6-7V5z"/><path d="M7 10l2 2 4-4"/>', load:loadPolicies},
-  respolicies:{label:"Resp Policies", icon:'<path d="M10 2l6 3v5c0 4-3 6-6 7-3-1-6-3-6-7V5z"/><path d="M7 9h6M7 12h4"/>', load:loadRespPolicies},
-  events:   {label:"Events",   icon:'<path d="M10 3l8 14H2z"/><path d="M10 8v4M10 15v.4"/>',              load:loadEvents},
+  explore:  {label:"탐색기", icon:'<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5l5 5"/>',          load:loadExplore},
+  traffic:  {label:"트래픽 피드",     icon:'<path d="M2 10h4l2-5 3 10 2-6 1 1h4"/>',                          load:()=>{loadTraffic();loadWall();}},
+  responses:{label:"응답",icon:'<path d="M4 4h12v9H8l-4 4z"/><path d="M7 8h6M7 11h4"/>',          load:loadResponses},
+  agents:   {label:"에이전트",   icon:'<rect x="3" y="4" width="14" height="12" rx="2"/><circle cx="8" cy="9" r="2"/><path d="M12 8h3M12 11h3M5 14c1-2 5-2 6 0"/>', load:loadAgents},
+  policies: {label:"요청 정책", icon:'<path d="M10 2l6 3v5c0 4-3 6-6 7-3-1-6-3-6-7V5z"/><path d="M7 10l2 2 4-4"/>', load:loadPolicies},
+  respolicies:{label:"응답 정책", icon:'<path d="M10 2l6 3v5c0 4-3 6-6 7-3-1-6-3-6-7V5z"/><path d="M7 9h6M7 12h4"/>', load:loadRespPolicies},
+  trust:    {label:"에이전트 신뢰", icon:'<path d="M10 2l6 3v5c0 4-3 6-6 7-3-1-6-3-6-7V5z"/><circle cx="10" cy="9" r="2"/><path d="M10 11v3"/>', load:loadTrust},
+  mac:      {label:"MAC 보안 등급", icon:'<rect x="4" y="9" width="12" height="9" rx="2"/><path d="M7 9V6a3 3 0 0 1 6 0v3"/>', load:loadMac},
+  events:   {label:"보안 이벤트",   icon:'<path d="M10 3l8 14H2z"/><path d="M10 8v4M10 15v.4"/>',              load:loadEvents},
 };
+// ---- 화면 표시용 한글 라벨 (API 값은 영문 그대로 주고받는다) ----
+const VERDICT_KO = {ALLOW:"허용", DENY:"차단", BLOCK:"차단"};
+const verdictKo = v => v ? (VERDICT_KO[v] || v) : "—";
+const SEV_KO = {high:"높음", medium:"중간", low:"낮음"};
+const STATUS_KO = {active:"활성", disabled:"비활성", open:"미처리", resolved:"처리됨", closed:"종료"};
+const MODE_KO = {MONITOR:"모니터링", ENFORCE:"차단 모드"};
+
+// ---- 다크 / 화이트 모드 토글 ----
+function applyTheme(theme) {
+  const light = theme === "light";
+  if (light) document.documentElement.dataset.theme = "light";
+  else delete document.documentElement.dataset.theme;
+  $("#theme-toggle").setAttribute("aria-checked", String(light));
+  $("#theme-label").textContent = light ? "화이트 모드" : "다크 모드";
+}
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  applyTheme(next);
+  try { localStorage.setItem("theme", next); } catch {}
+}
+applyTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+
 const nav = $("#nav");
 Object.entries(TABS).forEach(([id, t], i) => {
   const b = document.createElement("button");
@@ -394,19 +567,147 @@ function show(id) {
     $("#" + x).classList.toggle("on", x === id);
     nav.children[i].classList.toggle("on", x === id);
   });
+  revealActiveTab(true);
   TABS[id].load();
 }
 
-async function api(path, opts) {
-  const r = await fetch("/api" + path, opts);
-  $("#live").classList.toggle("down", !r.ok && r.status >= 500);
+// ---- 반응형 상단 바: 탭이 한 줄에 안 들어가면 탭 줄을 아래로 내리고, 그래도 넘치면 가로 스크롤 + 가장자리 페이드 ----
+const bar = $(".bar");
+function syncNavFades() {
+  const max = nav.scrollWidth - nav.clientWidth;
+  nav.classList.toggle("fade-l", nav.scrollLeft > 2);
+  nav.classList.toggle("fade-r", max - nav.scrollLeft > 2);
+}
+function syncBar() {
+  // stacked 상태에선 탭 줄이 flex-basis:100%로 2행에 고정되므로, 그대로 재면 창을 다시 넓혀도
+  // 계속 2행으로 판정된다. 클래스를 잠시 떼고 '원래 배치'에서 한 줄에 들어가는지 잰 뒤 결정한다.
+  // (같은 프레임 안의 동기 측정이라 화면에 깜빡임은 생기지 않는다)
+  bar.classList.remove("stacked");
+  const wraps = nav.offsetTop > bar.firstElementChild.offsetTop + 4;
+  bar.classList.toggle("stacked", wraps);
+  syncNavFades();
+}
+// 선택된 탭이 스크롤 영역 밖에 있으면 가운데로 가져온다 (페이지 세로 스크롤은 건드리지 않음)
+function revealActiveTab(smooth) {
+  const b = nav.querySelector("button.on");
+  if (!b || nav.scrollWidth <= nav.clientWidth) return;
+  if (b.offsetLeft >= nav.scrollLeft && b.offsetLeft + b.offsetWidth <= nav.scrollLeft + nav.clientWidth) return;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  nav.scrollTo({left: b.offsetLeft - (nav.clientWidth - b.offsetWidth) / 2, behavior: smooth && !reduce ? "smooth" : "auto"});
+}
+nav.addEventListener("scroll", syncNavFades, {passive: true});
+// 마우스 휠(세로)로도 탭 줄을 가로로 넘길 수 있게
+nav.addEventListener("wheel", e => {
+  if (nav.scrollWidth <= nav.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  e.preventDefault();
+  nav.scrollLeft += e.deltaY;
+}, {passive: false});
+
+// ---- 크기 변경 / 확대·축소 처리 ----
+// resize 중엔 전환 효과를 끄고, 위치를 계산하는 오버레이(렌즈·자동완성)와 상단 바를 한 프레임에 한 번만 다시 맞춘다.
+let layoutFrame = 0, resizeTimer = 0;
+function scheduleLayout() {
+  if (layoutFrame) return;
+  layoutFrame = requestAnimationFrame(() => {
+    layoutFrame = 0;
+    syncBar();
+    // (rAF 콜백이라 아래 전역들은 스크립트 끝까지 실행된 뒤에 읽힌다)
+    if (lensRow) placeLens();
+    if (!suggestBox.hidden && suggestInput) positionSuggest();
+  });
+}
+addEventListener("resize", () => {
+  document.documentElement.classList.add("resizing");
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { document.documentElement.classList.remove("resizing"); revealActiveTab(false); }, 150);
+  scheduleLayout();
+});
+// 창 크기 외의 원인(웹폰트 로딩, 표 다시 그리기, 탭 전환)으로 레이아웃이 바뀌어도 따라간다
+if ("ResizeObserver" in window) {
+  const ro = new ResizeObserver(scheduleLayout);
+  ro.observe(bar); ro.observe(document.querySelector("main"));
+}
+document.fonts?.ready.then(scheduleLayout);
+
+// Admin key: required by every state-changing call (X-Admin-Key). Checked
+// against the server before it is stored; kept in this browser only.
+let ADMIN_KEY = "", KEY_STATE = "none", keyResolve = null;   // KEY_STATE: none | ok | bad
+try { ADMIN_KEY = localStorage.getItem("mayai-admin-key") || ""; } catch {}
+function paintKeyButton() {
+  const b = $("#admin-key-btn");
+  b.textContent = {none:"관리자 키", ok:"관리자 키 ✓", bad:"관리자 키 ✕"}[KEY_STATE];
+  b.classList.toggle("key-ok", KEY_STATE === "ok");
+  b.classList.toggle("key-bad", KEY_STATE === "bad");
+  b.title = {none:"관리자 키 없음: 변경 작업 불가", ok:"서버에서 확인된 관리자 키 저장됨", bad:"저장된 키가 서버와 맞지 않음"}[KEY_STATE];
+}
+async function checkAdminKey(key) {
+  if (!key) return false;
+  try {
+    const r = await fetch("/api/admin/verify", {headers: {"X-Admin-Key": key}});
+    return r.ok && (await r.json()).valid === true;
+  } catch { return false; }
+}
+function storeAdminKey(key, state) {
+  ADMIN_KEY = key;
+  try { key ? localStorage.setItem("mayai-admin-key", key) : localStorage.removeItem("mayai-admin-key"); } catch {}
+  KEY_STATE = key ? state : "none";
+  paintKeyButton();
+}
+function keyStatusHtml() {
+  return KEY_STATE === "ok" ? '<span class="ok">확인된 키가 저장되어 있습니다.</span>'
+    : KEY_STATE === "bad" ? '<span class="risk-hi">저장된 키가 서버와 맞지 않습니다.</span>'
+    : '<span class="dim">저장된 키가 없습니다.</span>';
+}
+function setAdminKey(reason) {
+  const d = $("#key-dialog");
+  $("#key-input").value = "";
+  $("#key-msg").innerHTML = reason ? `<span class="risk-hi">${esc(reason)}</span>` : keyStatusHtml();
+  $("#key-clear").disabled = !ADMIN_KEY;
+  if (!d.open) d.showModal();
+  $("#key-input").focus();
+  return new Promise(res => { keyResolve = res; });
+}
+function closeKeyDialog(result) {
+  const d = $("#key-dialog");
+  if (d.open) d.close();
+  if (keyResolve) { const r = keyResolve; keyResolve = null; r(result); }
+}
+$("#key-dialog").addEventListener("close", () => closeKeyDialog(false));
+async function submitAdminKey(e) {
+  e.preventDefault();
+  const key = $("#key-input").value.trim();
+  if (!key) { $("#key-msg").innerHTML = '<span class="risk-hi">키를 입력하세요.</span>'; return; }
+  $("#key-msg").innerHTML = '<span class="dim">서버에서 확인 중…</span>';
+  if (await checkAdminKey(key)) { storeAdminKey(key, "ok"); closeKeyDialog(true); }
+  else $("#key-msg").innerHTML = '<span class="risk-hi">맞지 않는 키입니다. 저장하지 않았습니다.</span>';
+}
+function clearAdminKey() {
+  storeAdminKey("", "none");
+  $("#key-clear").disabled = true;
+  $("#key-msg").innerHTML = '<span class="ok">이 브라우저에서 키를 삭제했습니다.</span> 이제 변경 작업 때 키를 다시 묻습니다.';
+}
+paintKeyButton();
+if (ADMIN_KEY) checkAdminKey(ADMIN_KEY).then(ok => { KEY_STATE = ok ? "ok" : "bad"; paintKeyButton(); });
+async function api(path, opts = {}, retried = false) {
+  const method = (opts.method || "GET").toUpperCase();
+  const send = method === "GET" ? opts : {...opts, headers: {...(opts.headers || {}), "X-Admin-Key": ADMIN_KEY}};
+  const r = await fetch("/api" + path, send);
+  const down = !r.ok && r.status >= 500;
+  $("#live").classList.toggle("down", down);
+  $("#live").textContent = down ? "연결 오류" : "연결됨";
+  if (r.status === 401 && method !== "GET" && !retried) {
+    if (ADMIN_KEY) { KEY_STATE = "bad"; paintKeyButton(); }
+    const ok = await setAdminKey(ADMIN_KEY ? "저장된 키가 맞지 않습니다. 다시 입력하세요." : "이 작업에는 관리자 키가 필요합니다.");
+    if (ok) return api(path, opts, true);
+    throw new Error("관리자 키가 없어 작업을 취소했습니다.");
+  }
   if (!r.ok) throw new Error(await r.text());
   return r.status === 204 ? null : r.json();
 }
 const formObj = f => Object.fromEntries(new FormData(f).entries());
 const esc = s => String(s ?? "").replace(/[<>&"']/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = s => String(s ?? "").replace("T", " ").slice(0, 19);
-const selectAllHeader = kind => `<input type="checkbox" id="select-all-${kind}" aria-label="Select all ${kind}" onchange="toggleAll('${kind}', this.checked)">`;
+const selectAllHeader = kind => `<input type="checkbox" id="select-all-${kind}" aria-label="전체 선택" onchange="toggleAll('${kind}', this.checked)">`;
 function tbl(el, cols, rows, rowFn) {
   el.innerHTML = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>" +
     (rows.length ? rows.map(rowFn).join("")
@@ -482,7 +783,7 @@ const X = {transport:"", component:"", direction:"", method:"", rule:""};
 try { Object.assign(X, JSON.parse(localStorage.getItem("explorer") || "{}")); } catch {}
 let CATALOG = null;
 const SEV = {high:"var(--sev-high)", medium:"var(--sev-medium)", low:"var(--dim)"};
-const KIND = {request:"Request →", response:"← Response", inbound:"← Notification"};
+const KIND = {request:"요청 →", response:"← 응답", inbound:"← 서버 알림"};
 let xAllOn = false;  // highlight state of the "all traffic" card (UI only)
 
 function xDirs() {
@@ -518,7 +819,7 @@ function xSet(key, value) {
   loadExplore();
 }
 function xPills(key, options) {
-  return `<div class="pills">` + [["", "All"], ...options].map(([v, label, disabled, title]) =>
+  return `<div class="pills">` + [["", "전체"], ...options].map(([v, label, disabled, title]) =>
     `<button class="pill${X[key] === v ? " on" : ""}" data-k="${key}" data-v="${esc(v)}"${disabled ? " disabled" : ""}${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`
   ).join("") + `</div>`;
 }
@@ -531,7 +832,7 @@ function xRuleCard(k, count) {
   return `<button class="rule${X.rule === k ? " on" : ""}" style="--sev:${SEV[r.severity] || SEV.low}" data-k="rule" data-v="${esc(k)}">
     <div class="top"><span>${esc(r.label)}</span><span class="n${count ? "" : " zero"}">${count}</span></div>
     <div class="k">${esc(k)}</div><p>${esc(r.description)}</p>
-    <div>${r.ml ? '<span class="tag">ML 필요</span>' : ''}${r.transports ? `<span class="tag">${esc(r.transports.join("/").toUpperCase())} 전용</span>` : ''}<span class="tag">${esc(r.severity)}</span></div>
+    <div>${r.ml ? '<span class="tag">ML 필요</span>' : ''}${r.transports ? `<span class="tag">${esc(r.transports.join("/").toUpperCase())} 전용</span>` : ''}<span class="tag">${esc(SEV_KO[r.severity] || r.severity)}</span></div>
   </button>`;
 }
 async function loadExplore() {
@@ -541,12 +842,12 @@ async function loadExplore() {
   const data = await api("/explore?" + new URLSearchParams({...X, limit: 300}));
   const rules = xRules();
   $("#x-steps").innerHTML =
-    xStep(1, "transport", "Transport", "프로토콜", xPills("transport", Object.entries(CATALOG.transports))) +
-    xStep(2, "component", "Component", "MCP 구성요소", xPills("component", Object.entries(CATALOG.components))) +
-    xStep(3, "direction", "Direction", "요청 / 응답", xPills("direction", Object.entries(CATALOG.directions).map(([v, l]) =>
+    xStep(1, "transport", "전송 방식", "HTTP / STDIO", xPills("transport", Object.entries(CATALOG.transports))) +
+    xStep(2, "component", "구성요소", "MCP 구성요소", xPills("component", Object.entries(CATALOG.components))) +
+    xStep(3, "direction", "방향", "요청 / 응답", xPills("direction", Object.entries(CATALOG.directions).map(([v, l]) =>
       [v, l, v === "inbound" && X.transport === "http", v === "inbound" ? "서버가 먼저 보내는 메시지는 STDIO 프록시에서만 볼 수 있습니다" : ""]))) +
-    xStep(4, "method", "Method", "MCP 메서드", xPills("method", xMethods().map(m => [m, m]))) +
-    xStep(5, "rule", "Detection", "탐지 룰", `<div class="rules">
+    xStep(4, "method", "메서드", "MCP 메서드", xPills("method", xMethods().map(m => [m, m]))) +
+    xStep(5, "rule", "탐지 룰", "탐지 항목별 건수", `<div class="rules">
       <button class="rule${xAllOn && !X.rule ? " on" : ""}" style="--sev:var(--cyan)" data-k="rule" data-v="">
         <div class="top"><span>이 경로의 전체 트래픽</span><span class="n">${data.total}</span></div>
         <div class="k">적용되는 룰 ${rules.length}개</div><p>탐지 여부와 관계없이 이 경로의 모든 기록</p></button>
@@ -557,17 +858,17 @@ async function loadExplore() {
   ].filter(Boolean);
   $("#x-crumb").innerHTML = (path.length ? path.map(p => `<b>${esc(p)}</b>`).join('<span class="sep">›</span>') : '<span class="dim">전체</span>') +
     `<span class="count">${data.matched}건 일치${data.matched > data.rows.length ? ` (최신 ${data.rows.length}건 표시)` : ""} · 경로 전체 ${data.total}건</span>
-     <button class="ghost" onclick="loadExplore()">Refresh</button>
-     <button class="ghost" onclick="Object.keys(X).forEach(k => X[k] = ''); xAllOn = false; xSet('rule', '')">Reset</button>`;
-  tbl($("#explore-t"), ["Time","Kind","Transport","Agent","Component","Method","Object","Destination","Verdict","Detections","Reason"], data.rows, r => `<tr>
+     <button class="ghost" onclick="loadExplore()">새로고침</button>
+     <button class="ghost" onclick="Object.keys(X).forEach(k => X[k] = ''); xAllOn = false; xSet('rule', '')">초기화</button>`;
+  tbl($("#explore-t"), ["시간","종류","전송","에이전트","구성요소","메서드","대상 객체","목적지","판정","탐지","사유"], data.rows, r => `<tr>
     <td class="dim">${esc(fmt(r.timestamp))}</td>
     <td>${esc(KIND[r.kind] || r.kind)} <span class="dim">NO.${r.id}${r.request_log_id ? ` ← 요청 NO.${r.request_log_id}` : ""}</span></td>
     <td>${esc(r.transport)}</td><td class="id">${esc(r.agent_id) || '—'}</td>
     <td>${compBadge(r.component)}</td><td>${esc(r.method) || '—'}</td>
     <td><span class="obj" title="${esc(r.object_name)}">${esc(r.object_name) || '—'}</span></td>
     <td>${esc(r.destination) || '—'}</td>
-    <td><span class="stamp ${r.verdict === 'DENY' ? 'deny' : 'allow'}">${esc(r.verdict || '—')}</span></td>
-    <td>${r.findings.length ? r.findings.map(f => `<span class="chip" style="--sev:${SEV[(CATALOG.rules[f] || {}).severity] || SEV.low}" title="${esc((CATALOG.rules[f] || {}).description)}">${esc(f)}</span>`).join("") : '<span class="dim">none</span>'}</td>
+    <td><span class="stamp ${r.verdict === 'DENY' ? 'deny' : 'allow'}">${esc(verdictKo(r.verdict))}</span></td>
+    <td>${r.findings.length ? r.findings.map(f => `<span class="chip" style="--sev:${SEV[(CATALOG.rules[f] || {}).severity] || SEV.low}" title="${esc((CATALOG.rules[f] || {}).description)}">${esc(f)}</span>`).join("") : '<span class="dim">없음</span>'}</td>
     <td class="dim">${esc(r.reason)}</td></tr>`);
 }
 document.addEventListener("click", e => {
@@ -599,32 +900,41 @@ async function loadWall() {
   const strip = $("#strip"), recent = logs.slice(0, 50).reverse();
   strip.className = "strip" + (recent.length ? "" : " empty");
   strip.innerHTML = recent.length
-    ? recent.map(l => `<i class="${l.decision === "DENY" ? "d" : ""}" title="${esc(l.decision)} ${esc(fmt(l.timestamp))}"></i>`).join("")
+    ? recent.map(l => `<i class="${l.decision === "DENY" ? "d" : ""}" title="${esc(verdictKo(l.decision))} ${esc(fmt(l.timestamp))}"></i>`).join("")
     : "아직 기록된 요청이 없습니다.";
 }
 
 // ---- agents ----
 async function loadAgents() {
   const rows = await api("/agents");
-  tbl($("#agents-t"), [selectAllHeader("agents"),"Agent","Name","Status","Source IP","Token","Registered","",""], rows, a => `<tr>
-    <td><input type="checkbox" class="row-select select-agents" data-id="${encodeURIComponent(a.agent_id)}" aria-label="Select agent ${esc(a.agent_id)}" onchange="syncSelection('agents')"></td>
+  tbl($("#agents-t"), [selectAllHeader("agents"),"에이전트","이름","상태","출발지 IP","허가 등급","토큰","등록일","",""], rows, a => `<tr>
+    <td><input type="checkbox" class="row-select select-agents" data-id="${encodeURIComponent(a.agent_id)}" aria-label="에이전트 ${esc(a.agent_id)} 선택" onchange="syncSelection('agents')"></td>
     <td class="id">${esc(a.agent_id)}</td><td>${esc(a.agent_name)}</td>
-    <td class="${a.status === 'active' ? 'id' : 'risk-hi'}">${esc(a.status)}</td>
+    <td class="${a.status === 'active' ? 'id' : 'risk-hi'}">${esc(STATUS_KO[a.status] || a.status)}</td>
     <td class="dim">${esc(a.source_ip) || "미설정"}</td>
-    <td class="${a.has_token ? '' : 'risk-hi'}">${a.has_token ? "set" : "none"}</td>
+    <td>${levelChip(a.clearance)}</td>
+    <td class="${a.has_token ? '' : 'risk-hi'}">${a.has_token ? "설정됨" : "없음"}</td>
     <td class="dim">${esc(fmt(a.created_at))}</td>
     <td class="actions">
       <button class="cell-btn" onclick="resetToken('${a.agent_id}')">토큰 재설정</button>
+      <button class="cell-btn" onclick="setClearance('${a.agent_id}', ${a.clearance || 2})">등급 설정</button>
       <button class="cell-btn" onclick="setSourceIp('${a.agent_id}','${a.source_ip || ""}')">IP 설정</button>
-      <button class="cell-btn" onclick="toggleAgent('${a.agent_id}','${a.status}')">${a.status === 'active' ? 'Disable' : 'Enable'}</button>
+      <button class="cell-btn" onclick="toggleAgent('${a.agent_id}','${a.status}')">${a.status === 'active' ? '비활성화' : '활성화'}</button>
     </td>
-    <td><button class="cell-btn d" onclick="delAgent('${a.agent_id}')">Delete</button></td></tr>`);
+    <td><button class="cell-btn d" onclick="delAgent('${a.agent_id}')">삭제</button></td></tr>`);
   syncSelection("agents");
 }
 async function resetToken(id) {
   const t = prompt(id + "의 새 토큰:");
   if (!t) return;
   try { await api(`/agents/${id}?token=${encodeURIComponent(t)}`, {method:"PUT"}); alert(id + "의 토큰을 변경했습니다."); loadAgents(); }
+  catch (x) { alert(x.message); }
+}
+async function setClearance(id, current) {
+  const v = prompt(`${id}의 MAC 허가 등급 (1~4)\n` + Object.entries(MAC_LEVELS).map(([k, l]) => `L${k} ${l}`).join("\n"), current);
+  if (v === null) return;
+  if (!["1", "2", "3", "4"].includes(v.trim())) { alert("1~4 중 하나를 입력하세요."); return; }
+  try { await api(`/agents/${id}?clearance=${v.trim()}`, {method:"PUT"}); loadAgents(); }
   catch (x) { alert(x.message); }
 }
 async function setSourceIp(id, current) {
@@ -652,14 +962,16 @@ async function toggleAgent(id, status) {
   await api(`/agents/${id}?status=${status === 'active' ? 'disabled' : 'active'}`, {method:"PUT"});
   loadAgents();
 }
-async function delAgent(id) { if (confirm(id + "을(를) 삭제할까요?")) { await api(`/agents/${id}`, {method:"DELETE"}); loadAgents(); } }
+async function delAgent(id) { if (confirm(id + "을(를) 삭제할까요?\n신뢰 상태(격리 이력 등)는 삭제되지 않아, 같은 ID로 다시 등록하면 그대로 이어받습니다.")) { await api(`/agents/${id}`, {method:"DELETE"}); loadAgents(); } }
 
 // ---- policy edit (shared by request / response policies) ----
 // The add form doubles as the edit form: "Edit" loads a row into it and the
 // submit button switches to PUT until saved or cancelled.
-const EDIT = {policy: null, "response-policy": null};
-const POLICY_ROWS = {policy: {}, "response-policy": {}};
-const policyKey = {policy: "policy_id", "response-policy": "response_policy_id"};
+const EDIT = {policy: null, "response-policy": null, "mac-label": null};
+const POLICY_ROWS = {policy: {}, "response-policy": {}, "mac-label": {}};
+const policyKey = {policy: "policy_id", "response-policy": "response_policy_id", "mac-label": "label_id"};
+const EDIT_TABLE = {policy: "#policies-t", "response-policy": "#response-policies-t", "mac-label": "#mac-labels-t"};
+const EDIT_RELOAD = {policy: () => loadPolicies(), "response-policy": () => loadRespPolicies(), "mac-label": () => loadMac()};
 function startEdit(kind, id) {
   const p = POLICY_ROWS[kind][id], f = $(`#${kind}-form`);
   if (!p) return;
@@ -684,7 +996,7 @@ function cancelEdit(kind) {
   markEditingRow(kind);
 }
 function markEditingRow(kind) {
-  const table = kind === "policy" ? "#policies-t" : "#response-policies-t", ed = EDIT[kind];
+  const table = EDIT_TABLE[kind], ed = EDIT[kind];
   document.querySelectorAll(`${table} tbody tr`).forEach(tr =>
     tr.classList.toggle("editing-row", !!ed && tr.dataset.id === String(ed[policyKey[kind]])));
 }
@@ -710,11 +1022,16 @@ function renderSuggest() {
   const items = [["*", SUGGEST_ALL[kind]], ...SUGGEST[kind].filter(v => !q || v.toLowerCase().includes(q)).map(v => [v, ""])];
   suggestBox.innerHTML = items.map(([v, label], i) =>
     `<div class="${i === 0 ? "all" : ""}" data-v="${esc(v)}"><span>${esc(v)}</span><small>${esc(label)}</small></div>`).join("");
-  const r = input.getBoundingClientRect();
-  suggestBox.style.left = `${r.left + scrollX}px`;
-  suggestBox.style.top = `${r.bottom + scrollY + 4}px`;
-  suggestBox.style.minWidth = `${r.width}px`;
   suggestBox.hidden = false;
+  positionSuggest();
+}
+// 입력칸 바로 아래에 붙이되 화면 오른쪽 밖으로 나가지 않게 한다 (창 크기를 바꾸면 다시 호출됨)
+function positionSuggest() {
+  const r = suggestInput.getBoundingClientRect(), vw = document.documentElement.clientWidth;
+  suggestBox.style.minWidth = `${Math.min(r.width, vw - 16)}px`;
+  const left = Math.max(8, Math.min(r.left, vw - suggestBox.offsetWidth - 8));
+  suggestBox.style.left = `${left + scrollX}px`;
+  suggestBox.style.top = `${r.bottom + scrollY + 4}px`;
 }
 function pickSuggest(value) {
   if (!suggestInput) return;
@@ -755,14 +1072,13 @@ document.addEventListener("keydown", e => {
 async function savePolicy(kind, e, path) {
   e.preventDefault();
   const o = formObj(e.target), ed = EDIT[kind];
-  o.priority = o.priority === "" ? 100 : +o.priority;
   o.enabled = ed ? !!ed.enabled : true;
   o.description = ed ? (ed.description || "") : "";
   try {
     await api(ed ? `${path}/${ed[policyKey[kind]]}` : path, {
       method: ed ? "PUT" : "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(o)});
     cancelEdit(kind);
-    await (kind === "policy" ? loadPolicies() : loadRespPolicies());
+    await EDIT_RELOAD[kind]();
   } catch (x) { alert(x.message); }
 }
 
@@ -773,22 +1089,22 @@ async function loadPolicies() {
   loadSuggestions();
   const rows = await api("/policies");
   POLICY_ROWS.policy = Object.fromEntries(rows.map(p => [p.policy_id, p]));
-  tbl($("#policies-t"), [selectAllHeader("policies"),"NO.","Name","Agent","Target","Tool","Action","Priority","Enabled","",""], rows, (p, i) => `<tr data-id="${p.policy_id}">
-    <td><input type="checkbox" class="row-select select-policies" data-id="${p.policy_id}" aria-label="Select policy ${esc(p.name)}" onchange="syncSelection('policies')"></td>
+  tbl($("#policies-t"), [selectAllHeader("policies"),"번호","이름","에이전트","목적지","도구","동작","사용","",""], rows, (p, i) => `<tr data-id="${p.policy_id}">
+    <td><input type="checkbox" class="row-select select-policies" data-id="${p.policy_id}" aria-label="정책 ${esc(p.name)} 선택" onchange="syncSelection('policies')"></td>
     <td class="dim" title="DB ID ${p.policy_id}">${i + 1}</td><td>${esc(p.name)}</td><td class="id">${esc(p.agent_id)}</td>
     <td>${esc(p.target)}</td><td>${esc(p.tool)}</td>
-    <td class="${p.action === 'DENY' ? 'risk-hi' : 'id'}">${esc(p.action)}</td>
-    <td class="num">${p.priority}</td><td class="dim">${p.enabled ? "yes" : "no"}</td>
-    <td class="actions"><button class="cell-btn" onclick="startEdit('policy', ${p.policy_id})">Edit</button>
-      <button class="cell-btn" onclick='togglePolicy(${JSON.stringify(p)})'>${p.enabled ? "Disable" : "Enable"}</button></td>
-    <td><button class="cell-btn d" onclick="delPolicy(${p.policy_id})">Delete</button></td></tr>`);
+    <td class="${p.action === 'DENY' ? 'risk-hi' : 'ok'}">${esc(verdictKo(p.action))}</td>
+    <td class="dim">${p.enabled ? "사용" : "중지"}</td>
+    <td class="actions"><button class="cell-btn" onclick="startEdit('policy', ${p.policy_id})">수정</button>
+      <button class="cell-btn" onclick='togglePolicy(${JSON.stringify(p)})'>${p.enabled ? "비활성화" : "활성화"}</button></td>
+    <td><button class="cell-btn d" onclick="delPolicy(${p.policy_id})">삭제</button></td></tr>`);
   markEditingRow("policy");
   syncSelection("policies");
 }
 const createPolicy = e => savePolicy("policy", e, "/policies");
 async function togglePolicy(p) {
   const body = {name:p.name, agent_id:p.agent_id, target:p.target, tool:p.tool,
-    action:p.action, priority:p.priority, enabled: !p.enabled, description: p.description || ""};
+    action:p.action, enabled: !p.enabled, description: p.description || ""};
   await api(`/policies/${p.policy_id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   loadPolicies();
 }
@@ -805,13 +1121,13 @@ async function loadTraffic() {
   clearFocus();
   const [rows, pols] = await Promise.all([api("/logs?limit=200"), api("/policies").catch(() => [])]);
   const polName = Object.fromEntries(pols.map(p => [p.policy_id, p.name]));
-  tbl($("#traffic-t"), [selectAllHeader("logs"),"NO.","Verdict","Time","Agent","Transport","Destination","Component","Method","Object","Policy","Reason",""], rows, l => `<tr data-log-id="${l.log_id}">
-    <td><input type="checkbox" class="row-select select-logs" data-id="${l.log_id}" aria-label="Select log ${l.log_id}" onchange="syncSelection('logs')"></td>
+  tbl($("#traffic-t"), [selectAllHeader("logs"),"번호","판정","시간","에이전트","전송","목적지","구성요소","메서드","대상 객체","정책","사유",""], rows, l => `<tr data-log-id="${l.log_id}">
+    <td><input type="checkbox" class="row-select select-logs" data-id="${l.log_id}" aria-label="로그 ${l.log_id} 선택" onchange="syncSelection('logs')"></td>
     <td class="dim nowrap">${l.log_id}</td>
-    <td><span class="stamp ${l.decision === 'DENY' ? 'deny' : 'allow'}">${esc(l.decision || '—')}</span></td>
+    <td><span class="stamp ${l.decision === 'DENY' ? 'deny' : 'allow'}">${esc(verdictKo(l.decision))}</span></td>
     <td class="dim">${esc(fmt(l.timestamp))}</td>
     <td class="id">${esc(l.agent_id) || '—'}</td>
-    <td>${esc(l.protocol) || '—'} <span class="dim">${esc(l.transport || 'http')}${l.direction === 'inbound' ? ' ← in' : ' → out'}</span></td>
+    <td>${esc(l.protocol) || '—'} <span class="dim">${esc(l.transport || 'http')}${l.direction === 'inbound' ? ' ← 수신' : ' → 송신'}</span></td>
     <td>${esc(l.destination) || '—'}</td>
     <td>${compBadge(l.component)}</td>
     <td>${esc(l.mcp_method) || '—'}</td>
@@ -819,9 +1135,9 @@ async function loadTraffic() {
     <td class="dim" title="${l.policy_id ? `DB ID ${l.policy_id}` : ''}">${l.policy_id == null ? '—' : esc(polName[l.policy_id] || `(삭제됨 #${l.policy_id})`)}</td>
     <td class="dim">${esc(l.reason)}</td>
     <td class="actions">
-      <button class="cell-btn" onclick="decide(${l.log_id},'ALLOW')">Allow</button>
-      <button class="cell-btn d" onclick="decide(${l.log_id},'BLOCK')">Block</button>
-      <button class="cell-btn d" onclick="delLog(${l.log_id})">Delete</button>
+      <button class="cell-btn" onclick="decide(${l.log_id},'ALLOW')">허용</button>
+      <button class="cell-btn d" onclick="decide(${l.log_id},'BLOCK')">차단</button>
+      <button class="cell-btn d" onclick="delLog(${l.log_id})">삭제</button>
     </td></tr>`);
   syncSelection("logs");
 }
@@ -845,8 +1161,12 @@ const lensBox = document.createElement("div");
 lensBox.className = "lens"; lensBox.hidden = true;
 document.body.appendChild(lensBox);
 function placeLens() {
-  if (!lensRow || !lensRow.isConnected) return clearFocus();
-  const r = lensRow.getBoundingClientRect(), w = lensRow.closest(".wrap").getBoundingClientRect();
+  if (!lensRow || !lensRow.isConnected || !lensRow.offsetParent) return clearFocus();
+  const wrap = lensRow.closest(".wrap");
+  // magnify a little, but never so much that the row runs off the screen edges (recomputed on resize)
+  const ww = wrap.clientWidth;
+  lensRow.style.transform = `scale(${Math.min(1.03, (ww + 24) / ww)})`;
+  const r = lensRow.getBoundingClientRect(), w = wrap.getBoundingClientRect();
   // keep the lens on screen: a full-width table leaves only the page gutter to stick out into
   const left = Math.max(Math.max(r.left, w.left) - LENS_PAD, 4);
   const right = Math.min(Math.min(r.right, w.right) + LENS_PAD, document.documentElement.clientWidth - 4);
@@ -857,9 +1177,6 @@ function focusRow(tr) {
   clearFocus();
   lensRow = tr;
   tr.classList.add("lens-row");
-  // magnify a little, but never so much that the row runs off the screen edges
-  const width = tr.closest(".wrap").getBoundingClientRect().width;
-  tr.style.transform = `scale(${Math.min(1.03, (width + 24) / width)})`;
   lensBox.hidden = false;
   placeLens();
   tr.closest(".wrap").addEventListener("scroll", placeLens);
@@ -874,7 +1191,6 @@ function clearFocus() {
   lensBox.hidden = true;
 }
 document.addEventListener("mousedown", e => { if (lensRow && !lensRow.contains(e.target)) clearFocus(); }, true);
-addEventListener("resize", placeLens);
 
 function selectedIds(kind) {
   return [...document.querySelectorAll(`.select-${kind}:checked`)].map(el => {
@@ -933,17 +1249,17 @@ async function loadResponses() {
   const findingTotal = Object.values(ml.findings || {}).reduce((a,b) => a + b, 0);
   $("#ml-status").innerHTML = `
     <div class="card"><span>ML 분류기</span><strong class="${ml.loaded ? 'ok' : 'risk-hi'}">${ml.loaded ? '로드됨' : '사용 불가'}</strong><small>${esc(ml.model_id)} @ ${esc(ml.model_revision)}</small></div>
-    <div class="card"><span>ML 탐지</span><strong>${findingTotal}</strong><small>${Object.entries(ml.findings || {}).map(([k,v]) => `${esc(k)}: ${v}`).join(' · ') || 'none'}</small></div>
+    <div class="card"><span>ML 탐지</span><strong>${findingTotal}</strong><small>${Object.entries(ml.findings || {}).map(([k,v]) => `${esc(k)}: ${v}`).join(' · ') || '없음'}</small></div>
     <div class="card"><span>추론 지연</span><strong>${ml.latency_ms.p95} ms</strong><small>p50 ${ml.latency_ms.p50} · p95 ${ml.latency_ms.p95} · p99 ${ml.latency_ms.p99}</small></div>
-    <div class="card"><span>최근 로드 오류</span><strong>${ml.load_error ? '확인 필요' : 'none'}</strong><small>${esc(ml.load_error || '로컬 모델 파일 검증됨')}</small></div>`;
+    <div class="card"><span>최근 로드 오류</span><strong>${ml.load_error ? '확인 필요' : '없음'}</strong><small>${esc(ml.load_error || '로컬 모델 파일 검증됨')}</small></div>`;
   setModeSelects(setting.mode);
   const rpName = Object.fromEntries(policies.map(p => [p.response_policy_id, p.name]));
   // Related fields share a cell (main value + dim sub-line) so the table fits the
   // screen without a horizontal scrollbar and Summary gets real width.
-  tbl($("#responses-t"), ["Verdict","NO.","Time","Agent","Destination","Method / Object","HTTP","Findings","Summary"], rows, r => `<tr>
-    <td class="verdict"><span class="stamp ${r.effective_action === 'DENY' ? 'deny' : 'allow'}">${esc(r.effective_action)}</span>
-      <span class="sub-line">${esc(r.enforcement_mode)}</span>
-      <span class="sub-line" title="${esc(r.reason)}${r.response_policy_id ? ` (DB ID ${r.response_policy_id})` : ''}">정책: ${r.response_policy_id == null ? '없음' : esc(rpName[r.response_policy_id] || `삭제됨 #${r.response_policy_id}`)} <span class="${r.policy_action === 'DENY' ? 'risk-hi' : ''}">${esc(r.policy_action)}</span></span></td>
+  tbl($("#responses-t"), ["판정","번호","시간","에이전트","목적지","메서드 / 객체","HTTP","탐지 항목","요약"], rows, r => `<tr>
+    <td class="verdict"><span class="stamp ${r.effective_action === 'DENY' ? 'deny' : 'allow'}">${esc(verdictKo(r.effective_action))}</span>
+      <span class="sub-line">${esc(MODE_KO[r.enforcement_mode] || r.enforcement_mode)}</span>
+      <span class="sub-line" title="${esc(r.reason)}${r.response_policy_id ? ` (DB ID ${r.response_policy_id})` : ''}">정책: ${r.response_policy_id == null ? '없음' : esc(rpName[r.response_policy_id] || `삭제됨 #${r.response_policy_id}`)} <span class="${r.policy_action === 'DENY' ? 'risk-hi' : ''}">${esc(r.policy_action ? verdictKo(r.policy_action) : '')}</span></span></td>
     <td class="nowrap">${r.response_id}
       <span class="sub-line">요청 <a class="jump" title="Feed에서 이 요청 보기" onclick="jumpToLog(${r.request_log_id})">NO.${r.request_log_id}</a></span></td>
     <td class="dim nowrap">${esc(fmt(r.timestamp).slice(0, 10))}<span class="sub-line">${esc(fmt(r.timestamp).slice(11))}</span></td>
@@ -952,12 +1268,12 @@ async function loadResponses() {
     <td>${compBadge(r.component)} ${esc(r.request_method) || '—'}${(r.object_name || r.tool) && (r.object_name || r.tool) !== r.request_method ? `<span class="sub-line"><span class="obj" title="${esc(r.object_name || r.tool)}">${esc(r.object_name || r.tool)}</span></span>` : ''}</td>
     <td class="nowrap"><span class="${r.status_code >= 500 ? 'risk-hi' : ''}">${r.status_code}</span>
       <span class="sub-line">${r.body_size} B${r.inspected ? '' : ` · <span class="risk-md">${esc(r.inspection_status)}</span>`}</span></td>
-    <td class="${r.findings.length ? 'risk-md' : 'dim'}">${r.findings.length ? r.findings.map(f => `<div class="finding"><span>${esc(f)}</span><span class="actions"><button class="cell-btn" onclick="responseDecision(${r.response_id}, '${esc(f)}', 'ALLOW')">Allow</button><button class="cell-btn d" onclick="responseDecision(${r.response_id}, '${esc(f)}', 'BLOCK')">Block</button></span></div>`).join('') : 'none'}</td>
+    <td class="${r.findings.length ? 'risk-md' : 'dim'}">${r.findings.length ? r.findings.map(f => `<div class="finding"><span>${esc(f)}</span><span class="actions"><button class="cell-btn" onclick="responseDecision(${r.response_id}, '${esc(f)}', 'ALLOW')">허용</button><button class="cell-btn d" onclick="responseDecision(${r.response_id}, '${esc(f)}', 'BLOCK')">차단</button></span></div>`).join('') : '없음'}</td>
     <td class="summary">${esc(r.response_summary) || '<span class="dim">—</span>'}</td></tr>`);
 }
 function setModeSelects(mode) { document.querySelectorAll(".response-mode").forEach(s => { s.value = mode; }); }
 async function setResponseMode(mode) {
-  if (mode === "ENFORCE" && !confirm("응답 차단(ENFORCE)을 켤까요? DENY 응답 정책에 매칭되는 서버 응답이 HTTP 403(또는 JSON-RPC 오류)으로 바뀝니다.")) {
+  if (mode === "ENFORCE" && !confirm("응답 차단 모드(ENFORCE)를 켤까요? 차단(DENY) 응답 정책에 매칭되는 서버 응답이 HTTP 403(또는 JSON-RPC 오류)으로 바뀝니다.")) {
     setModeSelects("MONITOR"); return;
   }
   try {
@@ -973,22 +1289,22 @@ async function loadRespPolicies() {
   const [rows, setting] = await Promise.all([api("/response-policies"), api("/settings/response-enforcement")]);
   setModeSelects(setting.mode);
   POLICY_ROWS["response-policy"] = Object.fromEntries(rows.map(p => [p.response_policy_id, p]));
-  tbl($("#response-policies-t"), [selectAllHeader("response-policies"),"NO.","Name","Agent","Target","Tool","Finding","Action","Priority","Enabled","",""], rows, (p, i) => `<tr data-id="${p.response_policy_id}">
-    <td><input type="checkbox" class="row-select select-response-policies" data-id="${p.response_policy_id}" aria-label="Select response policy ${esc(p.name)}" onchange="syncSelection('response-policies')"></td>
+  tbl($("#response-policies-t"), [selectAllHeader("response-policies"),"번호","이름","에이전트","목적지","도구","탐지 항목","동작","사용","",""], rows, (p, i) => `<tr data-id="${p.response_policy_id}">
+    <td><input type="checkbox" class="row-select select-response-policies" data-id="${p.response_policy_id}" aria-label="응답 정책 ${esc(p.name)} 선택" onchange="syncSelection('response-policies')"></td>
     <td class="dim" title="DB ID ${p.response_policy_id}">${i + 1}</td><td>${esc(p.name)}</td><td class="id">${esc(p.agent_id)}</td>
     <td>${esc(p.target)}</td><td>${esc(p.tool)}</td><td>${esc(p.finding)}</td>
-    <td class="${p.action === 'DENY' ? 'risk-hi' : 'id'}">${esc(p.action)}</td><td class="num">${p.priority}</td>
-    <td class="dim">${p.enabled ? 'yes' : 'no'}</td>
-    <td class="actions"><button class="cell-btn" onclick="startEdit('response-policy', ${p.response_policy_id})">Edit</button>
-      <button class="cell-btn" onclick='toggleResponsePolicy(${JSON.stringify(p)})'>${p.enabled ? 'Disable' : 'Enable'}</button></td>
-    <td><button class="cell-btn d" onclick="delResponsePolicy(${p.response_policy_id})">Delete</button></td></tr>`);
+    <td class="${p.action === 'DENY' ? 'risk-hi' : 'ok'}">${esc(verdictKo(p.action))}</td>
+    <td class="dim">${p.enabled ? '사용' : '중지'}</td>
+    <td class="actions"><button class="cell-btn" onclick="startEdit('response-policy', ${p.response_policy_id})">수정</button>
+      <button class="cell-btn" onclick='toggleResponsePolicy(${JSON.stringify(p)})'>${p.enabled ? '비활성화' : '활성화'}</button></td>
+    <td><button class="cell-btn d" onclick="delResponsePolicy(${p.response_policy_id})">삭제</button></td></tr>`);
   markEditingRow("response-policy");
   syncSelection("response-policies");
 }
 const createResponsePolicy = e => savePolicy("response-policy", e, "/response-policies");
 async function toggleResponsePolicy(p) {
   const body = {name:p.name, agent_id:p.agent_id, target:p.target,
-    tool:p.tool, finding:p.finding, action:p.action, priority:p.priority,
+    tool:p.tool, finding:p.finding, action:p.action,
     enabled:!p.enabled, description:p.description || ""};
   await api(`/response-policies/${p.response_policy_id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
   loadRespPolicies();
@@ -1007,15 +1323,170 @@ async function responseDecision(id, finding, decision) {
   loadResponses();
 }
 
+// ---- MAC (STDIO zero trust) ----
+const MAC_LEVELS = {1:"Public (공개정보)", 2:"Internal (내부정보)", 3:"Restricted (제한정보)", 4:"Critical (핵심기밀)"};
+const LEVEL_COLOR = {1:"var(--allow)", 2:"#4F8EF7", 3:"var(--amber)", 4:"var(--deny)"};
+const FLOW_KO = {read:"읽기", write:"쓰기", egress:"외부 전송"};
+function levelChip(n) {
+  if (!n) return '<span class="dim">—</span>';
+  return `<span class="chip" style="--sev:${LEVEL_COLOR[n] || "var(--dim)"}" title="${esc(MAC_LEVELS[n] || "")}">L${n} ${esc((MAC_LEVELS[n] || "").split(" ")[0])}</span>`;
+}
+async function loadMac() {
+  loadSuggestions();
+  const [labels, sessions] = await Promise.all([api("/mac/labels"), api("/mac/sessions")]);
+  POLICY_ROWS["mac-label"] = Object.fromEntries(labels.map(l => [l.label_id, l]));
+  tbl($("#mac-labels-t"), ["번호","이름","목적지","객체 패턴","등급","데이터 흐름","",""], labels, (l, i) => `<tr data-id="${l.label_id}">
+    <td class="dim" title="DB ID ${l.label_id}">${i + 1}</td><td>${esc(l.name)}</td>
+    <td>${esc(l.target)}</td><td><span class="obj">${esc(l.object_pattern)}</span></td>
+    <td>${levelChip(l.level)}</td>
+    <td class="${l.flow === 'egress' ? 'risk-md' : ''}">${esc(FLOW_KO[l.flow] || l.flow)}</td>
+    <td class="actions"><button class="cell-btn" onclick="startEdit('mac-label', ${l.label_id})">수정</button></td>
+    <td><button class="cell-btn d" onclick="delMacLabel(${l.label_id})">삭제</button></td></tr>`);
+  markEditingRow("mac-label");
+  tbl($("#mac-sessions-t"), ["세션","상태","에이전트","허가 등급","현재 세션 등급","등급을 올린 대상","갱신 시각",""], sessions, s => `<tr>
+    <td class="dim">${esc(s.session_id)}</td>
+    <td class="${s.revoked ? 'risk-hi' : 'ok'}" title="${esc(s.revoked_reason || '')}">${s.revoked ? '폐기됨' : '활성'}</td>
+    <td class="id">${esc(s.agent_id)}</td>
+    <td>${levelChip(s.clearance)}</td><td>${levelChip(s.level)}</td>
+    <td>${esc(s.raised_by) || '<span class="dim">—</span>'}</td>
+    <td class="dim">${esc(fmt(s.updated_at))}</td>
+    <td><button class="cell-btn" onclick="resetMacSession('${encodeURIComponent(s.session_id)}')" ${s.level > 1 ? "" : "disabled"}>L1로 초기화</button></td></tr>`);
+}
+const createMacLabel = e => savePolicy("mac-label", e, "/mac/labels");
+async function delMacLabel(id) {
+  const l = POLICY_ROWS["mac-label"][id];
+  if (!confirm(`라벨 '${l ? l.name : id}'을(를) 삭제할까요? 이 대상은 라벨이 없어져 L4 핵심기밀로 취급됩니다.`)) return;
+  await api(`/mac/labels/${id}`, {method:"DELETE"});
+  if (EDIT["mac-label"] && EDIT["mac-label"].label_id === id) cancelEdit("mac-label");
+  loadMac();
+}
+async function resetMacSession(encoded) {
+  const id = decodeURIComponent(encoded);
+  if (!confirm(`세션 ${id}의 등급을 L1로 초기화할까요? 이 세션은 다시 낮은 등급 대상으로 전송할 수 있게 됩니다.`)) return;
+  try { await api(`/mac/sessions/${encoded}/reset`, {method:"POST"}); loadMac(); } catch (x) { alert(x.message); }
+}
+
+// ---- agent trust (STDIO zero trust) ----
+const TRUST_KO = {NORMAL:"정상", SUSPICIOUS:"의심", COMPROMISED:"침해", RECOVERY:"복구 중"};
+const TRUST_COLOR = {NORMAL:"var(--allow)", SUSPICIOUS:"var(--amber)", COMPROMISED:"var(--deny)", RECOVERY:"#4F8EF7"};
+const RECOVERY_KO = {NONE:"—", REQUESTED:"복구 요청됨", PROBATION:"관찰 중"};
+const AUDIT_ACTION_KO = {AUTO_RESTRICT:"자동 권한 축소", AUTO_QUARANTINE:"자동 격리", MANUAL_QUARANTINE:"수동 격리",
+  RECOVERY_REQUESTED:"복구 요청", RECOVERY_APPROVED:"복구 승인", TRUST_VERIFIED:"검증 완료", PROBATION_ENDED:"관찰 종료",
+  SESSION_ISSUED:"세션 발급", SESSION_LEVEL_RESET:"세션 등급 초기화", SETTINGS_CHANGED:"전환 기준 변경"};
+function trustChip(status, recovery) {
+  const label = TRUST_KO[status] || status;
+  const extra = recovery === "PROBATION" ? " · 관찰" : "";
+  return `<span class="chip" style="--sev:${TRUST_COLOR[status] || "var(--dim)"}">${esc(label + extra)}</span>`;
+}
+function approverName() {
+  let saved = "";
+  try { saved = localStorage.getItem("mayai-approver") || ""; } catch {}
+  const name = prompt("승인자 이름 (감사 로그에 기록됩니다)", saved);
+  if (name && name.trim()) { try { localStorage.setItem("mayai-approver", name.trim()); } catch {} return name.trim(); }
+  return null;
+}
+async function trustCall(id, action, body) {
+  try { await api(`/trust/${encodeURIComponent(id)}/${action}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)}); }
+  catch (x) {
+    let msg = x.message; try { msg = JSON.parse(msg).detail || msg; } catch {}
+    alert(typeof msg === "string" ? msg : JSON.stringify(msg));
+  }
+  loadTrust();
+}
+async function quarantineAgent(id) {
+  const reason = prompt(`${id}을(를) 격리합니다. 모든 요청이 차단되고 세션·토큰이 폐기됩니다.\n격리 사유:`, "");
+  if (reason === null) return;
+  const approver = approverName(); if (!approver) return;
+  trustCall(id, "quarantine", {approver, reason});
+}
+async function requestRecovery(id) {
+  if (!confirm(`${id}의 침해 원인(악성 MCP 서버, 유출된 토큰, 조작된 설정 등)을 제거했습니까?\n확인을 누르면 복구 단계(RECOVERY)로 전환됩니다. 이 단계에서도 데이터 접근은 계속 차단됩니다.`)) return;
+  const note = prompt("원인을 어떻게 제거했는지 기록하세요 (필수)", "");
+  if (!note || !note.trim()) return;
+  const approver = approverName(); if (!approver) return;
+  trustCall(id, "recovery-request", {approver, cause_resolved: true, note});
+}
+async function approveRecovery(id) {
+  if (!confirm(`${id} 복구 승인 전 확인:\n1) 에이전트 탭에서 토큰을 새로 발급했나요? (안 했으면 승인이 거부됩니다)\n2) 실행 환경 무결성은 자동 검증할 수 없습니다(검증 불가). 직접 확인했고 그 책임으로 승인합니까?`)) return;
+  const note = prompt("승인 메모", "");
+  if (note === null) return;
+  const approver = approverName(); if (!approver) return;
+  trustCall(id, "recovery-approve", {approver, note, accept_unverified_integrity: true});
+}
+async function verifyAgent(id, probation) {
+  const reason = prompt(probation ? `${id}의 관찰을 종료하고 전체 권한(정상)으로 돌립니다. 메모:` : `${id}의 의심 상태를 검토했고 정상으로 돌립니다. 검토 내용:`, "");
+  if (reason === null) return;
+  const approver = approverName(); if (!approver) return;
+  trustCall(id, "verify", {approver, reason});
+}
+function trustActions(t) {
+  const id = esc(t.agent_id).replace(/'/g, "\\'"), b = [];
+  if (t.trust_status === "SUSPICIOUS") b.push(`<button class="cell-btn" onclick="verifyAgent('${id}', false)">검증 완료</button>`);
+  if (t.trust_status === "NORMAL" && t.recovery_status === "PROBATION") b.push(`<button class="cell-btn" onclick="verifyAgent('${id}', true)">관찰 종료</button>`);
+  if (t.trust_status === "COMPROMISED") b.push(`<button class="cell-btn" onclick="requestRecovery('${id}')">복구 요청</button>`);
+  if (t.trust_status === "RECOVERY") b.push(`<button class="cell-btn" onclick="approveRecovery('${id}')">복구 승인</button>`);
+  if (t.trust_status !== "COMPROMISED") b.push(`<button class="cell-btn d" onclick="quarantineAgent('${id}')">격리</button>`);
+  return b.join(" ");
+}
+async function loadTrust() {
+  const category = $("#audit-category").value;
+  const [rows, settings, audit] = await Promise.all([
+    api("/trust"), api("/trust/settings"), api("/audit?limit=200" + (category ? `&category=${category}` : ""))]);
+  tbl($("#trust-t"), ["에이전트","신뢰 상태","복구 단계","허가 등급","위험 점수","위반 / 유출 / 노출","최근 보안 이벤트","격리 사유","세션 (활성 / 폐기)","무결성",""], rows, t => {
+    const active = t.sessions.filter(x => !x.revoked).length, revoked = t.sessions.length - active;
+    return `<tr>
+    <td class="id">${esc(t.agent_id)}${t.registered ? "" : '<span class="sub-line risk-hi">등록 삭제됨 (상태 보존)</span>'}</td>
+    <td>${t.evaluated ? trustChip(t.trust_status, t.recovery_status) : '<span class="chip" style="--sev:var(--dim)">미평가</span><span class="sub-line dim">STDIO 요청 없음 · 첫 요청 때 정상으로 시작</span>'}</td>
+    <td class="dim">${esc(RECOVERY_KO[t.recovery_status] || t.recovery_status)}</td>
+    <td>${levelChip(t.mac_clearance)}</td>
+    <td class="num">${t.risk_score ?? 0}</td>
+    <td class="num">${t.violation_count ?? 0} / ${t.exfil_count ?? 0} / ${t.exposure_count ?? 0}</td>
+    <td>${t.last_security_event ? `${esc(t.last_security_event)}<span class="sub-line">${esc(fmt(t.last_security_event_at))}</span>` : '<span class="dim">—</span>'}</td>
+    <td>${t.quarantine_reason ? `<span class="risk-hi">${esc(t.quarantine_reason)}</span><span class="sub-line">${esc(fmt(t.quarantined_at))}</span>` : '<span class="dim">—</span>'}</td>
+    <td title="${esc(t.sessions.map(x => x.session_id + (x.revoked ? " (폐기)" : "")).join("\n"))}">${active} / ${revoked}</td>
+    <td class="${!t.evaluated ? 'dim' : t.integrity_status === 'VERIFIED' ? 'ok' : 'risk-md'}">${!t.evaluated ? '—' : t.integrity_status === 'VERIFIED' ? '검증됨' : '검증 불가'}</td>
+    <td class="actions">${trustActions(t)}</td></tr>`;
+  });
+  const f = $("#trust-settings-form");
+  ["trust_suspicious_after","trust_compromised_after","trust_compromised_exfil_after","trust_restricted_max_level"]
+    .forEach(k => { if (document.activeElement !== f.elements[k]) f.elements[k].value = settings[k]; });
+  $("#policy-version").textContent = `정책 버전 ${settings.policy_version}`;
+  const c = audit.chain;
+  $("#audit-chain").innerHTML = c.ok
+    ? `<span class="ok">해시 체인 정상</span> · ${c.checked}건 검증 · 기록은 추가만 가능하고 수정·삭제는 DB에서 거부됩니다.`
+    : `<span class="risk-hi">해시 체인 손상: #${c.broken_at} 기록부터 변조가 의심됩니다.</span>`;
+  tbl($("#audit-t"), ["번호","시간","주체","분류","에이전트","동작","이전 → 이후","내용"], audit.rows, a => `<tr>
+    <td class="dim">${a.audit_id}</td><td class="dim">${esc(fmt(a.timestamp))}</td>
+    <td>${esc(actorKo(a.actor))}</td><td class="dim">${esc({trust:"신뢰 상태", session:"세션", admin_api:"설정·정책 변경"}[a.category] || a.category)}</td>
+    <td class="id">${esc(a.agent_id) || '<span class="dim">—</span>'}</td>
+    <td>${a.category === "admin_api" ? `${esc(a.detail || a.action)}<span class="sub-line dim">${esc(a.action)}</span>` : esc(AUDIT_ACTION_KO[a.action] || a.action)}</td>
+    <td>${a.from_status || a.to_status ? `${esc(a.from_status || "—")} → ${esc(a.to_status || "—")}` : '<span class="dim">—</span>'}</td>
+    <td class="dim">${a.category === "admin_api" ? "" : esc(a.detail)}</td></tr>`);
+}
+function actorKo(actor) {
+  if (actor === "system") return "시스템 (자동)";
+  if (actor === "admin") return "관리자 (키 인증)";
+  return actor.startsWith("admin:") ? `관리자 · ${actor.slice(6)}` : actor;
+}
+async function saveTrustSettings(e) {
+  e.preventDefault();
+  const o = Object.fromEntries(Object.entries(formObj(e.target)).map(([k, v]) => [k, Number(v)]));
+  try {
+    const r = await api("/trust/settings", {method:"PUT", headers:{"Content-Type":"application/json"}, body: JSON.stringify(o)});
+    if (!r.changed.length) alert("바뀐 값이 없어 저장하지 않았습니다.");
+    loadTrust();
+  } catch (x) { alert(x.message); }
+}
+
 // ---- events ----
 async function loadEvents() {
   const rows = await api("/events?limit=200");
-  tbl($("#events-t"), ["Time","Agent","Type","Severity","Target","Reason","Status"], rows, e => `<tr>
+  tbl($("#events-t"), ["시간","에이전트","유형","심각도","목적지","사유","상태"], rows, e => `<tr>
     <td class="dim">${esc(fmt(e.timestamp))}</td><td class="id">${esc(e.agent_id) || '—'}</td>
     <td>${esc(e.event_type)}</td>
-    <td class="${e.severity === 'high' ? 'risk-hi' : e.severity === 'medium' ? 'risk-md' : ''}">${esc(e.severity)}</td>
+    <td class="${e.severity === 'high' ? 'risk-hi' : e.severity === 'medium' ? 'risk-md' : ''}">${esc(SEV_KO[e.severity] || e.severity)}</td>
     <td>${esc(e.target) || '—'}</td>
-    <td class="dim">${esc(e.reason)}</td><td>${esc(e.status)}</td></tr>`);
+    <td class="dim">${esc(e.reason)}</td><td>${esc(STATUS_KO[e.status] || e.status)}</td></tr>`);
 }
 
 show("explore");
